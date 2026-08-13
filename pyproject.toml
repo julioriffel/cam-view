@@ -1,0 +1,13 @@
+[project]
+name = "cam-wiew"
+version = "0.1.0"
+description = "DVR Viewer for Intelbras MHDX 1004 — Beautiful desktop app for live camera feeds via RTSP"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "opencv-python-headless>=5.0.0.93",
+    "pyside6>=6.11.1",
+]
+
+[project.scripts]
+camview = "main:main"
