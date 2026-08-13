@@ -25,17 +25,18 @@ class DVRConfig:
     save_folder: str = str(Path.home() / 'imagens')
 
 
-def build_rtsp_url(config: DVRConfig, channel: int) -> str:
+def build_rtsp_url(config: DVRConfig, channel: int, subtype_override: int = None) -> str:
     """Build RTSP URL for Intelbras MHDX DVR.
 
     Format: rtsp://user:password@host:port/cam/realmonitor?channel=N&subtype=S
     Special characters in password are URL-encoded.
     """
+    subtype = subtype_override if subtype_override is not None else config.subtype
     encoded_password = urllib.parse.quote(config.password, safe='')
     return (
         f"rtsp://{config.username}:{encoded_password}"
         f"@{config.host}:{config.port}"
-        f"/cam/realmonitor?channel={channel}&subtype={config.subtype}"
+        f"/cam/realmonitor?channel={channel}&subtype={subtype}"
     )
 
 

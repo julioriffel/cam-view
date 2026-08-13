@@ -4,7 +4,7 @@ import math
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QGridLayout, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFrame, QToolBar, QStatusBar, QSizePolicy,
-    QFileDialog
+    QFileDialog, QComboBox
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QSize
 from PySide6.QtGui import QPixmap, QColor, QPainter, QShortcut, QKeySequence
@@ -42,12 +42,123 @@ _VIDEO_STYLE = """
 """
 
 
+class TileControlPanel(QWidget):
+    quality_changed = Signal(str)
+    tracking_toggled = Signal()
+
+    def __init__(self, default_subtype: int, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setObjectName('tileControlPanel')
+        self.setStyleSheet("""
+            QWidget#tileControlPanel {
+                background-color: rgba(0, 0, 0, 0.85);
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                border-radius: 6px;
+            }
+        """)
+        
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setSpacing(4)
+
+        self._current_mode = 'HD' if default_subtype == 0 else 'SD'
+
+        # Label for the buttons
+        label = QLabel("Stream:")
+        label.setStyleSheet(f"color: {Colors.TEXT_MUTED}; font-size: 11px; font-weight: 600; background: transparent; border: none; padding-right: 2px;")
+        layout.addWidget(label)
+
+        # Segmented quality buttons
+        self.btn_hd = QPushButton('HD')
+        self.btn_sd = QPushButton('SD')
+        self.btn_off = QPushButton('OFF')
+
+        for btn in (self.btn_hd, self.btn_sd, self.btn_off):
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda checked=False, b=btn: self._on_quality_clicked(b.text()))
+            layout.addWidget(btn)
+
+        # Separator
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setStyleSheet("color: rgba(255,255,255,0.2); background: transparent;")
+        layout.addWidget(sep)
+
+        # Motion tracking button
+        self.btn_track = QPushButton('🏃')
+        self.btn_track.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_track.setCheckable(True)
+        self.btn_track.clicked.connect(self.tracking_toggled.emit)
+        layout.addWidget(self.btn_track)
+        
+        self._update_styles()
+
+    def _on_quality_clicked(self, mode: str):
+        if self._current_mode != mode:
+            self._current_mode = mode
+            self._update_styles()
+            self.quality_changed.emit(mode)
+
+    def _update_styles(self):
+        base_style = f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {Colors.TEXT_MUTED};
+                border: 1px solid transparent;
+                border-radius: 4px;
+                font-size: 11px;
+                font-weight: 600;
+                padding: 4px 8px;
+            }}
+            QPushButton:hover {{
+                background-color: rgba(255, 255, 255, 0.1);
+                color: #ffffff;
+            }}
+        """
+        active_style = f"""
+            QPushButton {{
+                background-color: {Colors.ACCENT};
+                color: #ffffff;
+                border: 1px solid {Colors.ACCENT};
+                border-radius: 4px;
+                font-size: 11px;
+                font-weight: 700;
+                padding: 4px 8px;
+            }}
+        """
+        
+        self.btn_hd.setStyleSheet(active_style if self._current_mode == 'HD' else base_style)
+        self.btn_sd.setStyleSheet(active_style if self._current_mode == 'SD' else base_style)
+        self.btn_off.setStyleSheet(active_style if self._current_mode == 'OFF' else base_style)
+        
+        # Track button uses active style when checked
+        track_active = f"""
+            QPushButton {{
+                background-color: {Colors.WARNING};
+                color: #ffffff;
+                border: 1px solid {Colors.WARNING};
+                border-radius: 4px;
+                font-size: 11px;
+                padding: 4px 8px;
+            }}
+        """
+        self.btn_track.setStyleSheet(track_active if self.btn_track.isChecked() else base_style)
+
+    def set_tracking_state(self, enabled: bool):
+        if self.btn_track.isChecked() != enabled:
+            self.btn_track.setChecked(enabled)
+            self._update_styles()
+
+
 class CameraTile(QFrame):
     """A single camera feed tile with overlays."""
 
     double_clicked = Signal(int)
+    quality_changed = Signal(int, str)  # (channel, mode: 'HD'|'SD'|'OFF')
+    tracking_toggled = Signal(int)
 
-    def __init__(self, channel: int, parent=None):
+    def __init__(self, channel: int, default_subtype: int, parent=None):
         super().__init__(parent)
         self.channel = channel
         self.setObjectName('cameraTile')
@@ -104,6 +215,17 @@ class CameraTile(QFrame):
         self.tracking_badge.hide()
         self.tracking_badge.raise_()
 
+        # Overlay: Quality Selector & Tracking controls
+        self.controls = TileControlPanel(default_subtype, self)
+        self.controls.quality_changed.connect(
+            lambda mode: self.quality_changed.emit(self.channel, mode)
+        )
+        self.controls.tracking_toggled.connect(
+            lambda: self.tracking_toggled.emit(self.channel)
+        )
+        self.controls.adjustSize()
+        self.controls.raise_()
+
         self._set_waiting()
 
     def _set_waiting(self):
@@ -116,6 +238,21 @@ class CameraTile(QFrame):
             border: none;
             border-radius: 6px;
         """)
+
+    def set_disabled_state(self):
+        """Show disabled state when OFF is selected."""
+        self.video_label.clear()
+        self.video_label.setText(f'CH {self.channel}\nDisabled')
+        self.video_label.setStyleSheet(f"""
+            background: #0d1117;
+            color: {Colors.TEXT_MUTED};
+            font-size: 16px;
+            font-weight: 600;
+            border: none;
+            border-radius: 6px;
+        """)
+        self.fps_label.setText('  -- FPS  ')
+        self.status_dot.setStyleSheet(f'color: {Colors.TEXT_MUTED}; font-size: 12px; background: transparent; border: none;')
 
     def update_frame(self, pixmap: QPixmap):
         scaled = pixmap.scaled(
@@ -156,6 +293,7 @@ class CameraTile(QFrame):
 
     def set_tracking_visible(self, visible: bool):
         self.tracking_badge.setVisible(visible)
+        self.controls.set_tracking_state(visible)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -163,6 +301,7 @@ class CameraTile(QFrame):
         ch_w = self.channel_label.width()
         self.status_dot.move(10 + ch_w + 6, 11)
         self.tracking_badge.move(self.width() - self.tracking_badge.width() - 10, 10 + self.fps_label.height() + 6)
+        self.controls.move(10, self.height() - self.controls.height() - 10)
 
     def mouseDoubleClickEvent(self, event):
         self.double_clicked.emit(self.channel)
@@ -307,8 +446,10 @@ class ViewerWindow(QMainWindow):
         cols = 2 if self.config.channels <= 4 else int(math.ceil(math.sqrt(self.config.channels)))
 
         for i in range(self.config.channels):
-            tile = CameraTile(channel=i + 1)
+            tile = CameraTile(channel=i + 1, default_subtype=self.config.subtype)
             tile.double_clicked.connect(self._on_tile_double_click)
+            tile.quality_changed.connect(self._on_quality_changed)
+            tile.tracking_toggled.connect(self._on_tile_tracking_toggled)
             self.tiles.append(tile)
             row, col = divmod(i, cols)
             self.grid_layout.addWidget(tile, row, col)
@@ -347,24 +488,48 @@ class ViewerWindow(QMainWindow):
         self._uptime_timer.start(1000)
 
     def _start_streams(self):
+        # We now keep track of workers by channel index, using None if stopped
+        self.workers = [None] * self.config.channels
+
         for i in range(self.config.channels):
-            channel = i + 1
-            url = build_rtsp_url(self.config, channel)
-            worker = StreamWorker(url, channel, self.config.save_folder)
-            worker.frame_ready.connect(self.tiles[i].update_frame)
-            worker.fps_updated.connect(self.tiles[i].update_fps)
-            worker.status_changed.connect(self.tiles[i].update_status)
-            worker.tracking_status_changed.connect(self.tiles[i].set_tracking_visible)
-            worker.status_changed.connect(lambda s, ch=channel: self._on_channel_status(ch, s))
-            self.workers.append(worker)
-            worker.start()
+            self._start_worker(i, self.config.subtype)
+            
+        self._update_connected_count()
+
+    def _start_worker(self, index: int, subtype: int):
+        channel = index + 1
+        url = build_rtsp_url(self.config, channel, subtype_override=subtype)
+        worker = StreamWorker(url, channel, self.config.save_folder)
+        worker.frame_ready.connect(self.tiles[index].update_frame)
+        worker.fps_updated.connect(self.tiles[index].update_fps)
+        worker.status_changed.connect(self.tiles[index].update_status)
+        worker.tracking_status_changed.connect(self.tiles[index].set_tracking_visible)
+        worker.status_changed.connect(lambda s, ch=channel: self._on_channel_status(ch, s))
+        self.workers[index] = worker
+        worker.start()
+
+    def _on_quality_changed(self, channel: int, mode: str):
+        index = channel - 1
+        # Stop existing worker if any
+        if self.workers[index] is not None:
+            self.workers[index].stop()
+            self.workers[index].wait(2000)
+            self.workers[index] = None
+
+        if mode == 'OFF':
+            self.tiles[index].set_disabled_state()
+        else:
+            self.tiles[index]._set_waiting()
+            subtype = 0 if mode == 'HD' else 1
+            self._start_worker(index, subtype)
+            
         self._update_connected_count()
 
     def _on_channel_status(self, channel: int, status: str):
         self._update_connected_count()
 
     def _update_connected_count(self):
-        live = sum(1 for w in self.workers if w.isRunning())
+        live = sum(1 for w in self.workers if w is not None and w.isRunning())
         self.connected_label.setText(f'  Channels: {live}/{self.config.channels}  ')
 
     def _update_uptime(self):
@@ -386,8 +551,12 @@ class ViewerWindow(QMainWindow):
             if tile.channel != channel:
                 tile.hide()
 
+    def _on_tile_tracking_toggled(self, channel: int):
+        index = channel - 1
+        self._toggle_tracking(index)
+
     def _toggle_tracking(self, index: int):
-        if index < len(self.workers):
+        if index < len(self.workers) and self.workers[index] is not None:
             worker = self.workers[index]
             worker.set_tracking(not worker.is_tracking())
 
@@ -396,7 +565,8 @@ class ViewerWindow(QMainWindow):
         if folder:
             self.config.save_folder = folder
             for worker in self.workers:
-                worker.save_folder = folder
+                if worker is not None:
+                    worker.save_folder = folder
             config_store.save_config(self.config)
 
     def _show_grid(self):
@@ -411,10 +581,12 @@ class ViewerWindow(QMainWindow):
 
     def _stop_all_streams(self):
         for worker in self.workers:
-            worker.stop()
+            if worker is not None:
+                worker.stop()
         for worker in self.workers:
-            worker.wait(3000)
-        self.workers.clear()
+            if worker is not None:
+                worker.wait(3000)
+        self.workers = [None] * self.config.channels
 
     def closeEvent(self, event):
         self._stop_all_streams()
