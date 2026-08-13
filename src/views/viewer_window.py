@@ -2,14 +2,16 @@
 
 import math
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QGridLayout, QVBoxLayout,
+    QMainWindow, QWidget, QGridLayout, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFrame, QToolBar, QStatusBar, QSizePolicy,
+    QFileDialog
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QSize
-from PySide6.QtGui import QPixmap, QColor, QPainter
+from PySide6.QtGui import QPixmap, QColor, QPainter, QShortcut, QKeySequence
 
 from src.core.connection import DVRConfig, build_rtsp_url
 from src.core.stream_worker import StreamWorker
+from src.core import config_store
 from src.styles.theme import Colors
 
 
@@ -86,6 +88,22 @@ class CameraTile(QFrame):
         self.status_dot.adjustSize()
         self.status_dot.raise_()
 
+        # Overlay: tracking badge (hidden by default)
+        self.tracking_badge = QLabel(' 🏃 Tracking ')
+        self.tracking_badge.setParent(self)
+        self.tracking_badge.setStyleSheet(f"""
+            background-color: rgba(255, 167, 38, 0.20);
+            color: {Colors.WARNING};
+            border: 1px solid rgba(255, 167, 38, 0.50);
+            font-size: 11px;
+            font-weight: 700;
+            border-radius: 4px;
+            padding: 2px 6px;
+        """)
+        self.tracking_badge.adjustSize()
+        self.tracking_badge.hide()
+        self.tracking_badge.raise_()
+
         self._set_waiting()
 
     def _set_waiting(self):
@@ -136,11 +154,15 @@ class CameraTile(QFrame):
             # Clear waiting text style once we get a frame
             self.video_label.setStyleSheet(_VIDEO_STYLE)
 
+    def set_tracking_visible(self, visible: bool):
+        self.tracking_badge.setVisible(visible)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.fps_label.move(self.width() - self.fps_label.width() - 10, 10)
         ch_w = self.channel_label.width()
         self.status_dot.move(10 + ch_w + 6, 11)
+        self.tracking_badge.move(self.width() - self.tracking_badge.width() - 10, 10 + self.fps_label.height() + 6)
 
     def mouseDoubleClickEvent(self, event):
         self.double_clicked.emit(self.channel)
@@ -235,11 +257,29 @@ class ViewerWindow(QMainWindow):
         """)
         toolbar.addWidget(info_label)
 
+        # Help / Tips label
+        help_label = QLabel('  💡 Tip: Press Ctrl+1, Ctrl+2, etc., to toggle motion tracking per channel  ')
+        help_label.setStyleSheet(f"""
+            color: {Colors.TEXT_MUTED};
+            font-size: 12px;
+            font-style: italic;
+            background: transparent;
+            border: none;
+        """)
+        toolbar.addWidget(help_label)
+
         # Spacer
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         spacer.setStyleSheet('background: transparent; border: none;')
         toolbar.addWidget(spacer)
+
+        # Folder selector button
+        folder_btn = QPushButton('Save Folder')
+        folder_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        folder_btn.setStyleSheet(_TOOLBAR_BTN)
+        folder_btn.clicked.connect(self._select_folder)
+        toolbar.addWidget(folder_btn)
 
         # Grid view button
         grid_btn = QPushButton('Grid View')
@@ -272,6 +312,12 @@ class ViewerWindow(QMainWindow):
             self.tiles.append(tile)
             row, col = divmod(i, cols)
             self.grid_layout.addWidget(tile, row, col)
+            
+            # Setup shortcut for this channel
+            if i < 9:  # Ctrl+1 to Ctrl+9
+                shortcut = QShortcut(QKeySequence(f"Ctrl+{i + 1}"), self)
+                # Capture i correctly using default argument in lambda
+                shortcut.activated.connect(lambda ch_idx=i: self._toggle_tracking(ch_idx))
 
         # ── Status Bar ──
         status_bar = QStatusBar()
@@ -304,10 +350,11 @@ class ViewerWindow(QMainWindow):
         for i in range(self.config.channels):
             channel = i + 1
             url = build_rtsp_url(self.config, channel)
-            worker = StreamWorker(url, channel)
+            worker = StreamWorker(url, channel, self.config.save_folder)
             worker.frame_ready.connect(self.tiles[i].update_frame)
             worker.fps_updated.connect(self.tiles[i].update_fps)
             worker.status_changed.connect(self.tiles[i].update_status)
+            worker.tracking_status_changed.connect(self.tiles[i].set_tracking_visible)
             worker.status_changed.connect(lambda s, ch=channel: self._on_channel_status(ch, s))
             self.workers.append(worker)
             worker.start()
@@ -338,6 +385,19 @@ class ViewerWindow(QMainWindow):
         for tile in self.tiles:
             if tile.channel != channel:
                 tile.hide()
+
+    def _toggle_tracking(self, index: int):
+        if index < len(self.workers):
+            worker = self.workers[index]
+            worker.set_tracking(not worker.is_tracking())
+
+    def _select_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select Snapshot Save Folder", self.config.save_folder)
+        if folder:
+            self.config.save_folder = folder
+            for worker in self.workers:
+                worker.save_folder = folder
+            config_store.save_config(self.config)
 
     def _show_grid(self):
         self._fullscreen_channel = None

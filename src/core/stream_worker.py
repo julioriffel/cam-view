@@ -7,6 +7,8 @@ Includes automatic reconnection with exponential back-off.
 """
 
 import time
+from datetime import datetime
+from pathlib import Path
 
 import cv2
 from PySide6.QtCore import QMutex, QMutexLocker, QThread, Signal
@@ -19,16 +21,30 @@ class StreamWorker(QThread):
     frame_ready = Signal(QPixmap)       # Emitted when a new frame is decoded
     fps_updated = Signal(float)          # Emitted periodically with current FPS
     status_changed = Signal(str)         # 'connecting', 'live', 'reconnecting', 'error', 'stopped'
+    tracking_status_changed = Signal(bool) # Emitted when tracking toggles
 
     MAX_RETRIES = 5
     TARGET_FPS = 25
 
-    def __init__(self, rtsp_url: str, channel: int, parent=None):
+    def __init__(self, rtsp_url: str, channel: int, save_folder: str, parent=None):
         super().__init__(parent)
         self.rtsp_url = rtsp_url
         self.channel = channel
+        self.save_folder = save_folder
         self._running = False
+        self._tracking_enabled = False
+        self._last_snapshot_time = 0.0
         self._mutex = QMutex()
+
+    def set_tracking(self, enabled: bool):
+        """Enable or disable motion tracking."""
+        with QMutexLocker(self._mutex):
+            self._tracking_enabled = enabled
+        self.tracking_status_changed.emit(enabled)
+
+    def is_tracking(self) -> bool:
+        with QMutexLocker(self._mutex):
+            return self._tracking_enabled
 
     def run(self):
         self._running = True
@@ -58,6 +74,11 @@ class StreamWorker(QThread):
             frame_count = 0
             fps_start_time = time.monotonic()
             frame_interval = 1.0 / self.TARGET_FPS
+            
+            # Motion detection setup
+            bg_subtractor = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=50, detectShadows=False)
+            # Give the subtractor some frames to learn before triggering
+            learning_frames = 30
 
             while self._running:
                 loop_start = time.monotonic()
@@ -65,6 +86,36 @@ class StreamWorker(QThread):
                 ret, frame = cap.read()
                 if not ret or frame is None:
                     break  # Stream dropped, will try to reconnect
+
+                with QMutexLocker(self._mutex):
+                    tracking = self._tracking_enabled
+
+                if tracking:
+                    # Apply background subtraction
+                    mask = bg_subtractor.apply(frame)
+                    
+                    if learning_frames > 0:
+                        learning_frames -= 1
+                    else:
+                        # Find contours of moving objects
+                        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                        motion_detected = False
+                        
+                        for contour in contours:
+                            if cv2.contourArea(contour) > 800:  # Ignore small noise
+                                x, y, w, h = cv2.boundingRect(contour)
+                                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                                motion_detected = True
+                                
+                        if motion_detected:
+                            now = time.monotonic()
+                            # Save snapshot at most once every 2 seconds
+                            if now - self._last_snapshot_time > 2.0:
+                                self._last_snapshot_time = now
+                                self._save_snapshot(frame)
+                else:
+                    # Reset learning phase when tracking is disabled so it learns fresh when re-enabled
+                    learning_frames = 30
 
                 # Convert BGR -> RGB -> QImage -> QPixmap
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -108,6 +159,17 @@ class StreamWorker(QThread):
     def stop(self):
         """Signal the worker to stop gracefully."""
         self._running = False
+
+    def _save_snapshot(self, frame):
+        """Save a snapshot to the designated folder."""
+        folder = Path(self.save_folder)
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = folder / f'CH{self.channel}_{timestamp}.jpg'
+            cv2.imwrite(str(filename), frame)
+        except Exception:
+            pass  # Fail silently if directory is not writable
 
     def _interruptible_sleep(self, seconds: float):
         """Sleep that can be interrupted by stop()."""

@@ -7,6 +7,7 @@ connectivity by grabbing a single frame from a given channel.
 
 import urllib.parse
 from dataclasses import dataclass
+from pathlib import Path
 
 import cv2
 
@@ -21,6 +22,7 @@ class DVRConfig:
     password: str = ''
     channels: int = 4
     subtype: int = 1  # 0=main, 1=extra
+    save_folder: str = str(Path.home() / 'imagens')
 
 
 def build_rtsp_url(config: DVRConfig, channel: int) -> str:

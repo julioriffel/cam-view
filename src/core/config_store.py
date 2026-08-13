@@ -22,6 +22,7 @@ def save_config(config: DVRConfig) -> None:
         'password': config.password,
         'channels': config.channels,
         'subtype': config.subtype,
+        'save_folder': config.save_folder,
     }
     CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding='utf-8')
 
@@ -39,6 +40,7 @@ def load_config() -> DVRConfig | None:
             password=data.get('password', ''),
             channels=data.get('channels', 4),
             subtype=data.get('subtype', 1),
+            save_folder=data.get('save_folder', str(Path.home() / 'imagens')),
         )
     except (json.JSONDecodeError, KeyError, TypeError):
         return None
