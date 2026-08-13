@@ -4,9 +4,10 @@ Beautiful desktop application to view live camera feeds via RTSP.
 """
 
 import sys
+from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QIcon
 
 from src.styles.theme import get_global_stylesheet
 from src.views.login_window import LoginWindow
@@ -21,6 +22,11 @@ class CamViewApp:
         self.app = QApplication(sys.argv)
         self.app.setApplicationName("CamView")
         self.app.setOrganizationName("CamView")
+
+        # Set application icon
+        icon_path = Path(__file__).parent / "src" / "assets" / "icon.jpg"
+        if icon_path.exists():
+            self.app.setWindowIcon(QIcon(str(icon_path)))
 
         # Apply global dark theme
         self.app.setStyleSheet(get_global_stylesheet())

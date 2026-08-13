@@ -14,33 +14,47 @@ import cv2
 from PySide6.QtCore import QMutex, QMutexLocker, QThread, Signal
 from PySide6.QtGui import QImage, QPixmap
 
+from src.core.connection import DVRConfig
 
 class StreamWorker(QThread):
-    """Background worker that reads RTSP frames and emits them as QPixmap signals."""
+    """Background thread to process RTSP stream via OpenCV."""
 
-    frame_ready = Signal(QPixmap)       # Emitted when a new frame is decoded
-    fps_updated = Signal(float)          # Emitted periodically with current FPS
-    status_changed = Signal(str)         # 'connecting', 'live', 'reconnecting', 'error', 'stopped'
-    tracking_status_changed = Signal(bool) # Emitted when tracking toggles
+    frame_ready = Signal(QPixmap)
+    fps_updated = Signal(float)
+    status_changed = Signal(str)
+    tracking_status_changed = Signal(bool)
 
+    TARGET_FPS = 20.0
     MAX_RETRIES = 5
-    TARGET_FPS = 25
 
-    def __init__(self, rtsp_url: str, channel: int, save_folder: str, parent=None):
+    def __init__(self, url: str, channel: int, config: DVRConfig, parent=None):
         super().__init__(parent)
-        self.rtsp_url = rtsp_url
+        self.rtsp_url = url
         self.channel = channel
-        self.save_folder = save_folder
-        self._running = False
+        self.save_folder = config.save_folder
         self._tracking_enabled = False
-        self._last_snapshot_time = 0.0
+        
+        # Tracking parameters
+        self._filter_enabled = config.tracking_filter_enabled
+        self._min_area = config.tracking_min_area
+        self._persistence = config.tracking_persistence
+        
+        self._running = False
         self._mutex = QMutex()
+        self._last_snapshot_time = 0.0
 
     def set_tracking(self, enabled: bool):
-        """Enable or disable motion tracking."""
+        """Enable or disable motion tracking overlays and snapshots."""
         with QMutexLocker(self._mutex):
             self._tracking_enabled = enabled
         self.tracking_status_changed.emit(enabled)
+        
+    def update_tracking_params(self, filter_enabled: bool, min_area: int, persistence: int):
+        """Dynamically update tracking sensitivity parameters."""
+        with QMutexLocker(self._mutex):
+            self._filter_enabled = filter_enabled
+            self._min_area = min_area
+            self._persistence = persistence
 
     def is_tracking(self) -> bool:
         with QMutexLocker(self._mutex):
@@ -77,8 +91,10 @@ class StreamWorker(QThread):
             
             # Motion detection setup
             bg_subtractor = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=50, detectShadows=False)
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
             # Give the subtractor some frames to learn before triggering
             learning_frames = 30
+            consecutive_motion_frames = 0
 
             while self._running:
                 loop_start = time.monotonic()
@@ -89,6 +105,9 @@ class StreamWorker(QThread):
 
                 with QMutexLocker(self._mutex):
                     tracking = self._tracking_enabled
+                    filter_enabled = self._filter_enabled
+                    min_area = self._min_area
+                    persistence = self._persistence
 
                 if tracking:
                     # Apply background subtraction
@@ -97,25 +116,40 @@ class StreamWorker(QThread):
                     if learning_frames > 0:
                         learning_frames -= 1
                     else:
+                        if filter_enabled:
+                            # Morphological open to remove noise (bugs/rain)
+                            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+                        
                         # Find contours of moving objects
                         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                        motion_detected = False
+                        
+                        frame_has_motion = False
+                        valid_contours = []
                         
                         for contour in contours:
-                            if cv2.contourArea(contour) > 800:  # Ignore small noise
-                                x, y, w, h = cv2.boundingRect(contour)
-                                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                                motion_detected = True
+                            if cv2.contourArea(contour) > min_area:
+                                valid_contours.append(cv2.boundingRect(contour))
+                                frame_has_motion = True
                                 
-                        if motion_detected:
+                        if frame_has_motion:
+                            consecutive_motion_frames += 1
+                        else:
+                            consecutive_motion_frames = 0
+                            
+                        # Only trigger if motion persists for required frames
+                        if consecutive_motion_frames >= persistence:
+                            for (x, y, w, h) in valid_contours:
+                                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                                
                             now = time.monotonic()
                             # Save snapshot at most once every 2 seconds
                             if now - self._last_snapshot_time > 2.0:
                                 self._last_snapshot_time = now
                                 self._save_snapshot(frame)
                 else:
-                    # Reset learning phase when tracking is disabled so it learns fresh when re-enabled
+                    # Reset states when tracking is disabled
                     learning_frames = 30
+                    consecutive_motion_frames = 0
 
                 # Convert BGR -> RGB -> QImage -> QPixmap
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)

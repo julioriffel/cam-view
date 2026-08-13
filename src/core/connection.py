@@ -23,6 +23,9 @@ class DVRConfig:
     channels: int = 4
     subtype: int = 1  # 0=main, 1=extra
     save_folder: str = str(Path.home() / 'imagens')
+    tracking_filter_enabled: bool = True
+    tracking_min_area: int = 1500
+    tracking_persistence: int = 5
 
 
 def build_rtsp_url(config: DVRConfig, channel: int, subtype_override: int = None) -> str:

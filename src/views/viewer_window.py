@@ -12,6 +12,7 @@ from PySide6.QtGui import QPixmap, QColor, QPainter, QShortcut, QKeySequence
 from src.core.connection import DVRConfig, build_rtsp_url
 from src.core.stream_worker import StreamWorker
 from src.core import config_store
+from src.views.settings_dialog import TrackingSettingsDialog
 from src.styles.theme import Colors
 
 
@@ -413,12 +414,12 @@ class ViewerWindow(QMainWindow):
         spacer.setStyleSheet('background: transparent; border: none;')
         toolbar.addWidget(spacer)
 
-        # Folder selector button
-        folder_btn = QPushButton('Save Folder')
-        folder_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        folder_btn.setStyleSheet(_TOOLBAR_BTN)
-        folder_btn.clicked.connect(self._select_folder)
-        toolbar.addWidget(folder_btn)
+        # Settings button
+        settings_btn = QPushButton('⚙️ Settings')
+        settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        settings_btn.setStyleSheet(_TOOLBAR_BTN)
+        settings_btn.clicked.connect(self._show_settings)
+        toolbar.addWidget(settings_btn)
 
         # Grid view button
         grid_btn = QPushButton('Grid View')
@@ -499,7 +500,7 @@ class ViewerWindow(QMainWindow):
     def _start_worker(self, index: int, subtype: int):
         channel = index + 1
         url = build_rtsp_url(self.config, channel, subtype_override=subtype)
-        worker = StreamWorker(url, channel, self.config.save_folder)
+        worker = StreamWorker(url, channel, self.config)
         worker.frame_ready.connect(self.tiles[index].update_frame)
         worker.fps_updated.connect(self.tiles[index].update_fps)
         worker.status_changed.connect(self.tiles[index].update_status)
@@ -539,8 +540,27 @@ class ViewerWindow(QMainWindow):
         s = self._uptime_seconds % 60
         self.uptime_label.setText(f'  Uptime: {h:02d}:{m:02d}:{s:02d}  ')
 
+    def _show_settings(self):
+        dialog = TrackingSettingsDialog(self.config, self)
+        dialog.settings_saved.connect(self._on_settings_saved)
+        dialog.exec()
+        
+    def _on_settings_saved(self, config: DVRConfig):
+        self.config = config
+        config_store.save_config(self.config)
+        
+        # Instantly apply to running streams
+        for worker in self.workers:
+            if worker is not None:
+                worker.save_folder = self.config.save_folder
+                worker.update_tracking_params(
+                    filter_enabled=self.config.tracking_filter_enabled,
+                    min_area=self.config.tracking_min_area,
+                    persistence=self.config.tracking_persistence
+                )
+
     def _on_tile_double_click(self, channel: int):
-        if self._fullscreen_channel is not None:
+        if self._fullscreen_channel == channel:
             self._show_grid()
         else:
             self._show_fullscreen(channel)
@@ -559,15 +579,6 @@ class ViewerWindow(QMainWindow):
         if index < len(self.workers) and self.workers[index] is not None:
             worker = self.workers[index]
             worker.set_tracking(not worker.is_tracking())
-
-    def _select_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Snapshot Save Folder", self.config.save_folder)
-        if folder:
-            self.config.save_folder = folder
-            for worker in self.workers:
-                if worker is not None:
-                    worker.save_folder = folder
-            config_store.save_config(self.config)
 
     def _show_grid(self):
         self._fullscreen_channel = None
