@@ -1,15 +1,31 @@
-# 🎥 CamView — DVR Viewer
+# 🍌 🎥 CamView — DVR Viewer
 
 A beautiful, high-performance desktop application for viewing live camera feeds from **Intelbras MHDX** DVRs (and compatible RTSP sources). Built with Python 3.14, PySide6 (Qt6), and OpenCV.
+
+Protected by our friendly neighborhood **Nano Banana** security guard! 🍌🛡️
 
 ## ✨ Features
 
 - **Multi-channel Grid View**: Dynamically scales to show up to 16 channels simultaneously (e.g., a 2×2 grid for 4 channels).
 - **Fullscreen Mode**: Double-click any camera tile to focus on it in fullscreen; double-click again to return to the grid.
 - **Auto-Login & Persistence**: Securely saves your login information and automatically connects on startup.
-- **Real-time Metrics**: Live FPS counters, connection status indicators, and session uptime tracking.
 - **Premium Dark UI**: A modern "glassmorphism" aesthetic with smooth transitions, custom gradient buttons, and floating overlays.
 - **Low Latency**: Utilizes multi-threaded `cv2.CAP_FFMPEG` workers to grab and render frames asynchronously without blocking the GUI.
+
+### 🎛️ Per-Channel Control
+- Dynamically switch individual camera feeds between **HD** (Main Stream), **SD** (Extra Stream), or **OFF** (to save system resources) without interrupting other streams.
+
+### 🏃 Advanced Motion Tracking
+- Smart MOG2 background subtraction draws green bounding boxes around moving objects and saves snapshots to your disk.
+- **Insect-Proof Algorithm**: Built-in logic ignores false positives from flying bugs and rain in night vision by utilizing:
+  1. Morphological Noise Filtering (Erases thin streaks)
+  2. Dynamic Size Thresholding
+  3. Temporal Debouncing (Requires motion persistence across multiple frames)
+
+### ⚙️ Real-time Settings Adjustments
+- Tweak the math behind the motion tracking algorithm on the fly via the **Settings Dialog**.
+- Adjust minimum object size and persistence frames dynamically. The changes apply to all live feeds instantly without reconnecting!
+- Your settings and snapshot folder preferences are saved persistently.
 
 ## 🚀 Requirements
 
@@ -21,7 +37,7 @@ A beautiful, high-performance desktop application for viewing live camera feeds 
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/your-username/cam-wiew.git
+   git clone https://github.com/julioriffel/cam-view.git
    cd cam-wiew
    ```
 
@@ -40,25 +56,19 @@ A beautiful, high-performance desktop application for viewing live camera feeds 
 Launch the application using UV:
 
 ```bash
-uv run camview
+uv run python main.py
 ```
-*(Or manually via `uv run python main.py`)*
 
-### Connecting to your DVR
-1. The app defaults to **Intelbras MHDX 1004** standard settings (IP: `192.168.1.3`, Port: `554`).
-2. Enter your DVR **Username** and **Password**.
-3. Choose your stream quality (Extra Stream is recommended for lower latency, Main Stream for Full HD).
-4. Check **"Remember login info"** to save your credentials and skip the login screen on your next launch.
-5. Click **"Connect to DVR"**.
+### Keyboard Shortcuts
+- **`Ctrl+1`**, **`Ctrl+2`**...: Toggle motion tracking on/off for specific channels.
 
 ## 🏗️ Architecture
 
 - `main.py` — Application entry point and view controller.
-- `src/core/connection.py` — RTSP URL construction and connection probing.
-- `src/core/stream_worker.py` — `QThread` workers that grab OpenCV frames, apply FPS caps, and handle auto-reconnection logic.
-- `src/core/config_store.py` — Persistent JSON storage for connection credentials (`~/.config/camview/settings.json`).
-- `src/styles/theme.py` — Centralized Qt Style Sheets and color palettes.
-- `src/views/` — Modular PySide6 window classes for Login and Grid Viewer interfaces.
+- `src/core/connection.py` — RTSP URL construction and config data schemas.
+- `src/core/stream_worker.py` — OpenCV `QThread` workers handling grabbing, rendering, and computer vision tracking.
+- `src/core/config_store.py` — Persistent JSON storage (`~/.config/camview/settings.json`).
+- `src/views/` — Modular PySide6 window classes (`ViewerWindow`, `LoginWindow`, `TrackingSettingsDialog`).
 
 ## 📝 License
 
