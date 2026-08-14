@@ -37,6 +37,15 @@ Protected by our friendly neighborhood **Nano Banana** security guard! 🍌🛡�
 - **Connection Latency**: Live frame acquisition and decode delay indicator in milliseconds (`~24 ms`).
 - **Packet Loss & Jitter Tracking**: Dynamic health status badge (`🟢 0 Drops (Stable)` / `🟡 Recovered` / `🔴 Jitter`).
 
+### 📊 AI Object Event Database & Statistics Dashboard
+- **Local SQLite Storage (`events.db`)**: Records all AI detections (People, Vehicles, Animals) with timestamp, channel, confidence score, and associated snapshot file.
+- **Smart 10-Second Rate Limiting**: Debounces detection logging to register concise, meaningful events rather than repetitive frame spam.
+- **Visual Analytics Dashboard (`Ctrl+E`)**:
+  - **KPI Metric Cards**: Total Detections, People count, Vehicle count, Animal count.
+  - **Channel Breakdown Matrix**: Comparative grid displaying detection frequencies across every camera channel.
+  - **Interactive Search & Log Viewer**: Filter by channel, category, and date range (`Today`, `Last 24h`, `Last 7d`, `All Time`).
+  - **Click-to-Open Snapshot**: Double-clicking any event row opens the captured `.jpg` image in your system viewer.
+
 ### 🔔 System Tray & Desktop Notifications
 - **Background Surveillance (Default True)**: Closing the window docks CamView directly to the system tray so surveillance runs continuously in the background without taskbar clutter.
 - **Native Desktop Alerts**: Receives instant notifications when movement or AI targets (Person, Vehicle, Animal) appear.

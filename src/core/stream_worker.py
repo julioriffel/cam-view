@@ -16,6 +16,7 @@ from PySide6.QtGui import QImage, QPixmap
 
 from src.core.connection import DVRConfig
 from src.core.ai_detector import AIDetector
+from src.core.event_db import EventDatabase
 
 
 class StreamWorker(QThread):
@@ -244,6 +245,19 @@ class StreamWorker(QThread):
                                     if now - self._last_snapshot_time >= snapshot_interval:
                                         self._last_snapshot_time = now
                                         snapshot_path = self._save_snapshot(frame)
+
+                            # Log AI detections to database (with 10-second debounce per category)
+                            if ai_enabled and len(detections) > 0:
+                                db = EventDatabase.get_instance()
+                                for d in detections:
+                                    db.log_event(
+                                        channel=self.channel,
+                                        category=d.category,
+                                        label=f"{d.class_name.capitalize()} ({int(d.confidence * 100)}%)",
+                                        confidence=d.confidence,
+                                        snapshot_path=snapshot_path,
+                                        cooldown=10.0,
+                                    )
 
                             # Emit alert event for desktop notifications
                             if target_detected:

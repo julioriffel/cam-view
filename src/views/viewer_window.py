@@ -16,6 +16,7 @@ from src.core.connection import DVRConfig, build_rtsp_url
 from src.core.stream_worker import StreamWorker
 from src.core import config_store
 from src.views.settings_dialog import TrackingSettingsDialog
+from src.views.events_window import EventsStatsWindow
 from src.styles.theme import Colors
 
 
@@ -440,6 +441,9 @@ class ViewerWindow(QMainWindow):
         act_show = menu.addAction("👁️ Show CamView")
         act_show.triggered.connect(self._restore_from_tray)
 
+        act_events = menu.addAction("📊 Events & Stats...")
+        act_events.triggered.connect(self._show_events_window)
+
         act_settings = menu.addAction("⚙️ Settings...")
         act_settings.triggered.connect(self._show_settings)
 
@@ -520,6 +524,17 @@ class ViewerWindow(QMainWindow):
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         spacer.setStyleSheet('background: transparent; border: none;')
         toolbar.addWidget(spacer)
+
+        # Events & Stats button
+        events_btn = QPushButton('📊 Events & Stats')
+        events_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        events_btn.setStyleSheet(_TOOLBAR_BTN)
+        events_btn.setToolTip("View AI detection logs & statistics (Ctrl+E)")
+        events_btn.clicked.connect(self._show_events_window)
+        toolbar.addWidget(events_btn)
+
+        shortcut_events = QShortcut(QKeySequence("Ctrl+E"), self)
+        shortcut_events.activated.connect(self._show_events_window)
 
         # Settings button
         settings_btn = QPushButton('⚙️ Settings')
@@ -765,6 +780,10 @@ class ViewerWindow(QMainWindow):
         m = (self._uptime_seconds % 3600) // 60
         s = self._uptime_seconds % 60
         self.uptime_label.setText(f'Uptime: {h:02d}:{m:02d}:{s:02d}')
+
+    def _show_events_window(self):
+        dialog = EventsStatsWindow(self.config, self)
+        dialog.exec()
 
     def _show_settings(self):
         dialog = TrackingSettingsDialog(self.config, self)
