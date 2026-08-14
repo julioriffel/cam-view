@@ -556,7 +556,9 @@ class ViewerWindow(QMainWindow):
                 worker.update_tracking_params(
                     filter_enabled=self.config.tracking_filter_enabled,
                     min_area=self.config.tracking_min_area,
-                    persistence=self.config.tracking_persistence
+                    persistence=self.config.tracking_persistence,
+                    snapshot_on_motion=self.config.snapshot_on_motion,
+                    snapshot_interval=self.config.snapshot_interval,
                 )
 
     def _on_tile_double_click(self, channel: int):

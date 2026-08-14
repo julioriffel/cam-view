@@ -26,6 +26,8 @@ class DVRConfig:
     tracking_filter_enabled: bool = True
     tracking_min_area: int = 1500
     tracking_persistence: int = 5
+    snapshot_on_motion: bool = True
+    snapshot_interval: float = 2.0
 
 
 def build_rtsp_url(config: DVRConfig, channel: int, subtype_override: int = None) -> str:

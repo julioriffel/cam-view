@@ -26,6 +26,8 @@ def save_config(config: DVRConfig) -> None:
         'tracking_filter_enabled': config.tracking_filter_enabled,
         'tracking_min_area': config.tracking_min_area,
         'tracking_persistence': config.tracking_persistence,
+        'snapshot_on_motion': config.snapshot_on_motion,
+        'snapshot_interval': config.snapshot_interval,
     }
     CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding='utf-8')
 
@@ -47,6 +49,8 @@ def load_config() -> DVRConfig | None:
             tracking_filter_enabled=data.get('tracking_filter_enabled', True),
             tracking_min_area=data.get('tracking_min_area', 1500),
             tracking_persistence=data.get('tracking_persistence', 5),
+            snapshot_on_motion=data.get('snapshot_on_motion', True),
+            snapshot_interval=float(data.get('snapshot_interval', 2.0)),
         )
     except (json.JSONDecodeError, KeyError, TypeError):
         return None

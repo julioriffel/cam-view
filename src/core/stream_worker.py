@@ -38,6 +38,8 @@ class StreamWorker(QThread):
         self._filter_enabled = config.tracking_filter_enabled
         self._min_area = config.tracking_min_area
         self._persistence = config.tracking_persistence
+        self._snapshot_on_motion = config.snapshot_on_motion
+        self._snapshot_interval = float(config.snapshot_interval)
         
         self._running = False
         self._mutex = QMutex()
@@ -49,12 +51,21 @@ class StreamWorker(QThread):
             self._tracking_enabled = enabled
         self.tracking_status_changed.emit(enabled)
         
-    def update_tracking_params(self, filter_enabled: bool, min_area: int, persistence: int):
-        """Dynamically update tracking sensitivity parameters."""
+    def update_tracking_params(
+        self,
+        filter_enabled: bool,
+        min_area: int,
+        persistence: int,
+        snapshot_on_motion: bool = True,
+        snapshot_interval: float = 2.0,
+    ):
+        """Dynamically update tracking sensitivity and snapshot parameters."""
         with QMutexLocker(self._mutex):
             self._filter_enabled = filter_enabled
             self._min_area = min_area
             self._persistence = persistence
+            self._snapshot_on_motion = snapshot_on_motion
+            self._snapshot_interval = float(snapshot_interval)
 
     def is_tracking(self) -> bool:
         with QMutexLocker(self._mutex):
@@ -108,6 +119,8 @@ class StreamWorker(QThread):
                     filter_enabled = self._filter_enabled
                     min_area = self._min_area
                     persistence = self._persistence
+                    snapshot_on_motion = self._snapshot_on_motion
+                    snapshot_interval = self._snapshot_interval
 
                 if tracking:
                     # Apply background subtraction
@@ -141,11 +154,12 @@ class StreamWorker(QThread):
                             for (x, y, w, h) in valid_contours:
                                 cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
                                 
-                            now = time.monotonic()
-                            # Save snapshot at most once every 2 seconds
-                            if now - self._last_snapshot_time > 2.0:
-                                self._last_snapshot_time = now
-                                self._save_snapshot(frame)
+                            if snapshot_on_motion:
+                                now = time.monotonic()
+                                # Save snapshot at most once every `snapshot_interval` seconds
+                                if now - self._last_snapshot_time >= snapshot_interval:
+                                    self._last_snapshot_time = now
+                                    self._save_snapshot(frame)
                 else:
                     # Reset states when tracking is disabled
                     learning_frames = 30

@@ -15,16 +15,17 @@ Protected by our friendly neighborhood **Nano Banana** security guard! 🍌🛡�
 ### 🎛️ Per-Channel Control
 - Dynamically switch individual camera feeds between **HD** (Main Stream), **SD** (Extra Stream), or **OFF** (to save system resources) without interrupting other streams.
 
-### 🏃 Advanced Motion Tracking
+### 🏃 Advanced Motion Tracking & Snapshots
 - Smart MOG2 background subtraction draws green bounding boxes around moving objects and saves snapshots to your disk.
+- **Configurable Snapshot Trigger & Interval**: Toggle automatic snapshot capture on/off and set the exact cooldown interval (from 0.5 to 60 seconds) between snapshots during continuous movement.
 - **Insect-Proof Algorithm**: Built-in logic ignores false positives from flying bugs and rain in night vision by utilizing:
   1. Morphological Noise Filtering (Erases thin streaks)
   2. Dynamic Size Thresholding
   3. Temporal Debouncing (Requires motion persistence across multiple frames)
 
 ### ⚙️ Real-time Settings Adjustments
-- Tweak the math behind the motion tracking algorithm on the fly via the **Settings Dialog**.
-- Adjust minimum object size and persistence frames dynamically. The changes apply to all live feeds instantly without reconnecting!
+- Tweak the motion tracking and snapshot parameters on the fly via the **Settings Dialog**.
+- Adjust minimum object size, persistence frames, snapshot interval, and save folder dynamically. The changes apply to all live feeds instantly without reconnecting!
 - Your settings and snapshot folder preferences are saved persistently.
 
 ## 🚀 Requirements

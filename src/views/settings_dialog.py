@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox, 
-    QSlider, QSpinBox, QPushButton, QFrame, QGroupBox, QFileDialog
+    QSlider, QSpinBox, QDoubleSpinBox, QPushButton, QFrame, QGroupBox, QFileDialog
 )
 from PySide6.QtCore import Qt, Signal
 from src.core.connection import DVRConfig
@@ -8,15 +8,15 @@ from src.styles.theme import Colors
 
 
 class TrackingSettingsDialog(QDialog):
-    """Dialog for adjusting motion tracking parameters."""
+    """Dialog for adjusting motion tracking and snapshot parameters."""
     
     settings_saved = Signal(DVRConfig)
 
     def __init__(self, config: DVRConfig, parent=None):
         super().__init__(parent)
         self.config = config
-        self.setWindowTitle("Tracking Settings")
-        self.setMinimumWidth(350)
+        self.setWindowTitle("Settings")
+        self.setMinimumWidth(380)
         self.setStyleSheet(f"""
             QDialog {{ background: {Colors.BG_PRIMARY}; }}
             QLabel {{ color: {Colors.TEXT_PRIMARY}; font-size: 13px; }}
@@ -35,12 +35,12 @@ class TrackingSettingsDialog(QDialog):
                 left: 10px;
             }}
             QCheckBox {{ color: {Colors.TEXT_PRIMARY}; font-size: 13px; }}
-            QSpinBox {{
+            QSpinBox, QDoubleSpinBox {{
                 background: {Colors.BG_INPUT};
                 color: {Colors.TEXT_PRIMARY};
                 border: 1px solid {Colors.BORDER};
                 border-radius: 4px;
-                padding: 4px;
+                padding: 4px 8px;
             }}
             QPushButton {{
                 background: {Colors.BG_INPUT};
@@ -66,18 +66,18 @@ class TrackingSettingsDialog(QDialog):
         main_layout.setSpacing(16)
         main_layout.setContentsMargins(16, 16, 16, 16)
 
-        # Algorithm Settings Group
-        group = QGroupBox("Motion Algorithm")
-        group_layout = QVBoxLayout(group)
-        group_layout.setSpacing(12)
+        # ── 1. Motion Detection Algorithm Group ──────────────────────
+        group_motion = QGroupBox("Motion Detection Algorithm")
+        motion_layout = QVBoxLayout(group_motion)
+        motion_layout.setSpacing(12)
 
-        # 1. Noise Filter Checkbox
+        # Noise Filter Checkbox
         self.cb_filter = QCheckBox("Enable Morphological Noise Filter")
         self.cb_filter.setToolTip("Removes thin streaks like flying bugs or rain")
         self.cb_filter.setChecked(self.config.tracking_filter_enabled)
-        group_layout.addWidget(self.cb_filter)
+        motion_layout.addWidget(self.cb_filter)
 
-        # 2. Minimum Area Slider
+        # Minimum Area Slider
         area_layout = QVBoxLayout()
         area_layout.setSpacing(4)
         area_label_layout = QHBoxLayout()
@@ -89,6 +89,7 @@ class TrackingSettingsDialog(QDialog):
         
         self.slider_area = QSlider(Qt.Orientation.Horizontal)
         self.slider_area.setRange(100, 20000)
+        self.slider_area.setSingleStep(100)
         self.slider_area.setValue(self.config.tracking_min_area)
         
         self.spin_area.valueChanged.connect(self.slider_area.setValue)
@@ -100,9 +101,9 @@ class TrackingSettingsDialog(QDialog):
         
         area_layout.addLayout(area_label_layout)
         area_layout.addWidget(self.slider_area)
-        group_layout.addLayout(area_layout)
+        motion_layout.addLayout(area_layout)
 
-        # 3. Persistence Slider
+        # Persistence Slider
         pers_layout = QVBoxLayout()
         pers_layout.setSpacing(4)
         pers_label_layout = QHBoxLayout()
@@ -124,11 +125,61 @@ class TrackingSettingsDialog(QDialog):
         
         pers_layout.addLayout(pers_label_layout)
         pers_layout.addWidget(self.slider_pers)
-        group_layout.addLayout(pers_layout)
+        motion_layout.addLayout(pers_layout)
 
-        main_layout.addWidget(group)
+        main_layout.addWidget(group_motion)
         
-        # Storage Settings Group
+        # ── 2. Snapshot on Motion Settings Group ─────────────────────
+        group_snapshot = QGroupBox("Motion Snapshots")
+        snapshot_layout = QVBoxLayout(group_snapshot)
+        snapshot_layout.setSpacing(12)
+
+        # Snapshot on motion toggle
+        self.cb_snapshot = QCheckBox("Automatically capture snapshot on motion")
+        self.cb_snapshot.setChecked(self.config.snapshot_on_motion)
+        snapshot_layout.addWidget(self.cb_snapshot)
+
+        # Interval between snapshots
+        interval_layout = QVBoxLayout()
+        interval_layout.setSpacing(4)
+        interval_label_layout = QHBoxLayout()
+        interval_label = QLabel("Snapshot Interval (seconds):")
+        
+        self.spin_interval = QDoubleSpinBox()
+        self.spin_interval.setRange(0.5, 60.0)
+        self.spin_interval.setSingleStep(0.5)
+        self.spin_interval.setDecimals(1)
+        self.spin_interval.setSuffix(" s")
+        self.spin_interval.setValue(self.config.snapshot_interval)
+
+        self.slider_interval = QSlider(Qt.Orientation.Horizontal)
+        self.slider_interval.setRange(5, 600)  # 0.5s to 60.0s (x10)
+        self.slider_interval.setSingleStep(5)
+        self.slider_interval.setValue(int(self.config.snapshot_interval * 10))
+
+        self.spin_interval.valueChanged.connect(lambda val: self.slider_interval.setValue(int(val * 10)))
+        self.slider_interval.valueChanged.connect(lambda val: self.spin_interval.setValue(val / 10.0))
+
+        interval_label_layout.addWidget(interval_label)
+        interval_label_layout.addStretch()
+        interval_label_layout.addWidget(self.spin_interval)
+
+        interval_layout.addLayout(interval_label_layout)
+        interval_layout.addWidget(self.slider_interval)
+        snapshot_layout.addLayout(interval_layout)
+
+        # Enable/disable interval controls based on checkbox state
+        def _toggle_interval_widgets(enabled: bool):
+            self.spin_interval.setEnabled(enabled)
+            self.slider_interval.setEnabled(enabled)
+            interval_label.setEnabled(enabled)
+
+        self.cb_snapshot.toggled.connect(_toggle_interval_widgets)
+        _toggle_interval_widgets(self.config.snapshot_on_motion)
+
+        main_layout.addWidget(group_snapshot)
+
+        # ── 3. Storage Settings Group ────────────────────────────────
         storage_group = QGroupBox("Storage")
         storage_layout = QVBoxLayout(storage_group)
         storage_layout.setSpacing(12)
@@ -149,7 +200,7 @@ class TrackingSettingsDialog(QDialog):
 
         main_layout.addStretch()
 
-        # Buttons
+        # ── Action Buttons ───────────────────────────────────────────
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         
@@ -179,6 +230,8 @@ class TrackingSettingsDialog(QDialog):
         self.config.tracking_filter_enabled = self.cb_filter.isChecked()
         self.config.tracking_min_area = self.spin_area.value()
         self.config.tracking_persistence = self.spin_pers.value()
+        self.config.snapshot_on_motion = self.cb_snapshot.isChecked()
+        self.config.snapshot_interval = round(self.spin_interval.value(), 1)
         if hasattr(self, '_pending_folder') and self._pending_folder:
             self.config.save_folder = self._pending_folder
             
