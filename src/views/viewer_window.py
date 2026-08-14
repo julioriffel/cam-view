@@ -90,10 +90,14 @@ class TileControlPanel(QWidget):
         self.btn_track = QPushButton('🏃')
         self.btn_track.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_track.setCheckable(True)
-        self.btn_track.clicked.connect(self.tracking_toggled.emit)
+        self.btn_track.clicked.connect(self._on_track_clicked)
         layout.addWidget(self.btn_track)
         
         self._update_styles()
+
+    def _on_track_clicked(self):
+        self._update_styles()
+        self.tracking_toggled.emit()
 
     def _on_quality_clicked(self, mode: str):
         if self._current_mode != mode:
@@ -128,28 +132,49 @@ class TileControlPanel(QWidget):
                 padding: 4px 8px;
             }}
         """
-        
-        self.btn_hd.setStyleSheet(active_style if self._current_mode == 'HD' else base_style)
-        self.btn_sd.setStyleSheet(active_style if self._current_mode == 'SD' else base_style)
-        self.btn_off.setStyleSheet(active_style if self._current_mode == 'OFF' else base_style)
-        
-        # Track button uses active style when checked
-        track_active = f"""
+        track_style = f"""
             QPushButton {{
-                background-color: {Colors.WARNING};
-                color: #ffffff;
-                border: 1px solid {Colors.WARNING};
+                background-color: transparent;
+                color: {Colors.TEXT_MUTED};
+                border: 1px solid transparent;
                 border-radius: 4px;
                 font-size: 11px;
                 padding: 4px 8px;
             }}
+            QPushButton:hover {{
+                background-color: rgba(255, 255, 255, 0.12);
+                color: #ffffff;
+            }}
+            QPushButton:checked {{
+                background-color: {Colors.WARNING};
+                color: #ffffff;
+                border: 1px solid {Colors.WARNING};
+                border-radius: 4px;
+                font-weight: 700;
+            }}
+            QPushButton:checked:hover {{
+                background-color: #ffb74d;
+                border-color: #ffb74d;
+            }}
         """
-        self.btn_track.setStyleSheet(track_active if self.btn_track.isChecked() else base_style)
+        
+        self.btn_hd.setStyleSheet(active_style if self._current_mode == 'HD' else base_style)
+        self.btn_sd.setStyleSheet(active_style if self._current_mode == 'SD' else base_style)
+        self.btn_off.setStyleSheet(active_style if self._current_mode == 'OFF' else base_style)
+        self.btn_track.setStyleSheet(track_style)
 
     def set_tracking_state(self, enabled: bool):
-        if self.btn_track.isChecked() != enabled:
-            self.btn_track.setChecked(enabled)
-            self._update_styles()
+        self.btn_track.setChecked(enabled)
+        self._update_styles()
+
+    def set_mode(self, mode: str):
+        self._current_mode = mode
+        self._update_styles()
+
+    def set_mode_and_tracking(self, mode: str, tracking: bool):
+        self._current_mode = mode
+        self.btn_track.setChecked(tracking)
+        self._update_styles()
 
 
 class CameraTile(QFrame):
@@ -239,6 +264,15 @@ class CameraTile(QFrame):
             border: none;
             border-radius: 6px;
         """)
+
+    def set_initial_state(self, mode: str, tracking: bool):
+        """Set initial stream mode and tracking state on startup."""
+        self.controls.set_mode_and_tracking(mode, tracking)
+        if mode == 'OFF':
+            self.set_disabled_state()
+        else:
+            self._set_waiting()
+        self.set_tracking_visible(tracking)
 
     def set_disabled_state(self):
         """Show disabled state when OFF is selected."""
@@ -489,11 +523,28 @@ class ViewerWindow(QMainWindow):
         self._uptime_timer.start(1000)
 
     def _start_streams(self):
-        # We now keep track of workers by channel index, using None if stopped
+        # Ensure channel_states dict exists
+        if not hasattr(self.config, 'channel_states') or not isinstance(self.config.channel_states, dict):
+            self.config.channel_states = {}
+
         self.workers = [None] * self.config.channels
 
         for i in range(self.config.channels):
-            self._start_worker(i, self.config.subtype)
+            ch = i + 1
+            st = self.config.channel_states.get(str(ch), {})
+            mode = st.get('mode', 'HD' if self.config.subtype == 0 else 'SD')
+            tracking = st.get('tracking', False)
+
+            # Sync tile UI state
+            self.tiles[i].set_initial_state(mode, tracking)
+
+            if mode == 'OFF':
+                self.workers[i] = None
+            else:
+                subtype = 0 if mode == 'HD' else 1
+                self._start_worker(i, subtype)
+                if tracking and self.workers[i] is not None:
+                    self.workers[i].set_tracking(True)
             
         self._update_connected_count()
 
@@ -511,6 +562,13 @@ class ViewerWindow(QMainWindow):
 
     def _on_quality_changed(self, channel: int, mode: str):
         index = channel - 1
+
+        # Persist mode change
+        if not hasattr(self.config, 'channel_states') or not isinstance(self.config.channel_states, dict):
+            self.config.channel_states = {}
+        self.config.channel_states.setdefault(str(channel), {})['mode'] = mode
+        config_store.save_config(self.config)
+
         # Stop existing worker if any
         if self.workers[index] is not None:
             self.workers[index].stop()
@@ -523,6 +581,12 @@ class ViewerWindow(QMainWindow):
             self.tiles[index]._set_waiting()
             subtype = 0 if mode == 'HD' else 1
             self._start_worker(index, subtype)
+
+            # Restore tracking state if it was active
+            was_tracking = self.config.channel_states.get(str(channel), {}).get('tracking', False)
+            if was_tracking and self.workers[index] is not None:
+                self.workers[index].set_tracking(True)
+                self.tiles[index].set_tracking_visible(True)
             
         self._update_connected_count()
 
@@ -559,6 +623,12 @@ class ViewerWindow(QMainWindow):
                     persistence=self.config.tracking_persistence,
                     snapshot_on_motion=self.config.snapshot_on_motion,
                     snapshot_interval=self.config.snapshot_interval,
+                    ai_enabled=self.config.ai_enabled,
+                    ai_confidence=self.config.ai_confidence_threshold,
+                    ai_detect_person=self.config.ai_detect_person,
+                    ai_detect_vehicles=self.config.ai_detect_vehicles,
+                    ai_detect_animals=self.config.ai_detect_animals,
+                    ai_filter_snapshots=self.config.ai_filter_snapshots,
                 )
 
     def _on_tile_double_click(self, channel: int):
@@ -578,9 +648,22 @@ class ViewerWindow(QMainWindow):
         self._toggle_tracking(index)
 
     def _toggle_tracking(self, index: int):
+        ch = index + 1
         if index < len(self.workers) and self.workers[index] is not None:
             worker = self.workers[index]
-            worker.set_tracking(not worker.is_tracking())
+            new_state = not worker.is_tracking()
+            worker.set_tracking(new_state)
+            self.tiles[index].set_tracking_visible(new_state)
+        else:
+            st = self.config.channel_states.get(str(ch), {})
+            new_state = not st.get('tracking', False)
+            self.tiles[index].set_tracking_visible(new_state)
+
+        # Persist tracking state
+        if not hasattr(self.config, 'channel_states') or not isinstance(self.config.channel_states, dict):
+            self.config.channel_states = {}
+        self.config.channel_states.setdefault(str(ch), {})['tracking'] = new_state
+        config_store.save_config(self.config)
 
     def _show_grid(self):
         self._fullscreen_channel = None

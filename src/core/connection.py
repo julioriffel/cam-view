@@ -6,7 +6,7 @@ connectivity by grabbing a single frame from a given channel.
 """
 
 import urllib.parse
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
@@ -28,6 +28,13 @@ class DVRConfig:
     tracking_persistence: int = 5
     snapshot_on_motion: bool = True
     snapshot_interval: float = 2.0
+    ai_enabled: bool = True
+    ai_confidence_threshold: float = 0.45
+    ai_detect_person: bool = True
+    ai_detect_vehicles: bool = True
+    ai_detect_animals: bool = False
+    ai_filter_snapshots: bool = True
+    channel_states: dict = field(default_factory=dict)
 
 
 def build_rtsp_url(config: DVRConfig, channel: int, subtype_override: int = None) -> str:

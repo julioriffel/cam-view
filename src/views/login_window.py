@@ -448,14 +448,14 @@ class LoginWindow(QMainWindow):
     # ── Config & Actions ──────────────────────────────────────────
 
     def _build_config(self) -> DVRConfig:
-        return DVRConfig(
-            host=self.ip_input.text().strip(),
-            port=self.port_input.value(),
-            username=self.user_input.text().strip(),
-            password=self.pass_input.text(),
-            channels=self.channels_input.value(),
-            subtype=self.stream_combo.currentData(),
-        )
+        existing = config_store.load_config() or DVRConfig()
+        existing.host = self.ip_input.text().strip()
+        existing.port = self.port_input.value()
+        existing.username = self.user_input.text().strip()
+        existing.password = self.pass_input.text()
+        existing.channels = self.channels_input.value()
+        existing.subtype = self.stream_combo.currentData()
+        return existing
 
     def _on_test_connection(self):
         self._set_loading(True, 'Testing connection...')

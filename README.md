@@ -15,6 +15,15 @@ Protected by our friendly neighborhood **Nano Banana** security guard! 🍌🛡�
 ### 🎛️ Per-Channel Control
 - Dynamically switch individual camera feeds between **HD** (Main Stream), **SD** (Extra Stream), or **OFF** (to save system resources) without interrupting other streams.
 
+### 🧠 Smart Vision & AI Object Recognition
+- **100% Local CPU Inference**: Powered by OpenCV's native DNN engine and lightweight YOLO ONNX model (~4MB) with zero heavy external ML dependencies.
+- **Smart Target Categorization**:
+  - 🚶 **People**: Highlighted in vibrant Cyan (`Person 94%`)
+  - 🚗 **Vehicles**: Highlighted in Amber/Orange (`Car 88%`, `Motorcycle 95%`, `Truck`, `Bus`, `Bicycle`)
+  - 🐾 **Animals**: Highlighted in Green (`Dog 89%`, `Cat 85%`, `Bird`)
+- **Zero False-Alarm Snapshots**: Option to **only save snapshots when recognized objects are detected**, ignoring shadows, trees, or rain entirely.
+- **Hybrid Motion-Gating**: Only runs AI inference when motion occurs, keeping CPU usage ultra-low across all channels.
+
 ### 🏃 Advanced Motion Tracking & Snapshots
 - Smart MOG2 background subtraction draws green bounding boxes around moving objects and saves snapshots to your disk.
 - **Configurable Snapshot Trigger & Interval**: Toggle automatic snapshot capture on/off and set the exact cooldown interval (from 0.5 to 60 seconds) between snapshots during continuous movement.
@@ -24,8 +33,8 @@ Protected by our friendly neighborhood **Nano Banana** security guard! 🍌🛡�
   3. Temporal Debouncing (Requires motion persistence across multiple frames)
 
 ### ⚙️ Real-time Settings Adjustments
-- Tweak the motion tracking and snapshot parameters on the fly via the **Settings Dialog**.
-- Adjust minimum object size, persistence frames, snapshot interval, and save folder dynamically. The changes apply to all live feeds instantly without reconnecting!
+- Tweak the motion tracking, AI categories, and snapshot parameters on the fly via the **Settings Dialog**.
+- Adjust minimum object size, persistence frames, AI confidence threshold, target categories, snapshot interval, and save folder dynamically. The changes apply to all live feeds instantly without reconnecting!
 - Your settings and snapshot folder preferences are saved persistently.
 
 ## 🚀 Requirements

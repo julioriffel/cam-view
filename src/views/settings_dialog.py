@@ -179,7 +179,90 @@ class TrackingSettingsDialog(QDialog):
 
         main_layout.addWidget(group_snapshot)
 
-        # ── 3. Storage Settings Group ────────────────────────────────
+        # ── 3. Smart Vision (AI Detection) Group ─────────────────────
+        group_ai = QGroupBox("🧠 Smart Vision (AI Object Detection)")
+        ai_layout = QVBoxLayout(group_ai)
+        ai_layout.setSpacing(10)
+
+        # AI Master Enable Checkbox
+        self.cb_ai_enabled = QCheckBox("Enable AI Object Recognition (Local CPU)")
+        self.cb_ai_enabled.setChecked(self.config.ai_enabled)
+        ai_layout.addWidget(self.cb_ai_enabled)
+
+        # Confidence Threshold Slider
+        conf_layout = QVBoxLayout()
+        conf_layout.setSpacing(4)
+        conf_label_layout = QHBoxLayout()
+        conf_label = QLabel("Confidence Threshold:")
+        
+        self.spin_conf = QSpinBox()
+        self.spin_conf.setRange(15, 95)
+        self.spin_conf.setSingleStep(5)
+        self.spin_conf.setSuffix(" %")
+        self.spin_conf.setValue(int(self.config.ai_confidence_threshold * 100))
+
+        self.slider_conf = QSlider(Qt.Orientation.Horizontal)
+        self.slider_conf.setRange(15, 95)
+        self.slider_conf.setSingleStep(5)
+        self.slider_conf.setValue(int(self.config.ai_confidence_threshold * 100))
+
+        self.spin_conf.valueChanged.connect(self.slider_conf.setValue)
+        self.slider_conf.valueChanged.connect(self.spin_conf.setValue)
+
+        conf_label_layout.addWidget(conf_label)
+        conf_label_layout.addStretch()
+        conf_label_layout.addWidget(self.spin_conf)
+
+        conf_layout.addLayout(conf_label_layout)
+        conf_layout.addWidget(self.slider_conf)
+        ai_layout.addLayout(conf_layout)
+
+        # Target Categories
+        cat_label = QLabel("Detect Categories:")
+        cat_label.setStyleSheet(f"color: {Colors.TEXT_SECONDARY}; font-weight: 600; font-size: 12px; margin-top: 4px;")
+        ai_layout.addWidget(cat_label)
+
+        cat_boxes_layout = QVBoxLayout()
+        cat_boxes_layout.setSpacing(6)
+        cat_boxes_layout.setContentsMargins(8, 0, 0, 0)
+
+        self.cb_ai_person = QCheckBox("🚶 People  (Person)")
+        self.cb_ai_person.setChecked(self.config.ai_detect_person)
+        cat_boxes_layout.addWidget(self.cb_ai_person)
+
+        self.cb_ai_vehicles = QCheckBox("🚗 Vehicles  (Car, Motorcycle, Bicycle, Truck, Bus)")
+        self.cb_ai_vehicles.setChecked(self.config.ai_detect_vehicles)
+        cat_boxes_layout.addWidget(self.cb_ai_vehicles)
+
+        self.cb_ai_animals = QCheckBox("🐾 Animals  (Dog, Cat, Bird)")
+        self.cb_ai_animals.setChecked(self.config.ai_detect_animals)
+        cat_boxes_layout.addWidget(self.cb_ai_animals)
+
+        ai_layout.addLayout(cat_boxes_layout)
+
+        # AI Snapshot Filter
+        self.cb_ai_filter_snapshots = QCheckBox("Only capture snapshots if recognized objects are detected")
+        self.cb_ai_filter_snapshots.setChecked(self.config.ai_filter_snapshots)
+        self.cb_ai_filter_snapshots.setStyleSheet(f"color: {Colors.ACCENT}; margin-top: 4px;")
+        ai_layout.addWidget(self.cb_ai_filter_snapshots)
+
+        # Toggle child widgets based on master AI switch
+        def _toggle_ai_widgets(enabled: bool):
+            conf_label.setEnabled(enabled)
+            self.spin_conf.setEnabled(enabled)
+            self.slider_conf.setEnabled(enabled)
+            cat_label.setEnabled(enabled)
+            self.cb_ai_person.setEnabled(enabled)
+            self.cb_ai_vehicles.setEnabled(enabled)
+            self.cb_ai_animals.setEnabled(enabled)
+            self.cb_ai_filter_snapshots.setEnabled(enabled)
+
+        self.cb_ai_enabled.toggled.connect(_toggle_ai_widgets)
+        _toggle_ai_widgets(self.config.ai_enabled)
+
+        main_layout.addWidget(group_ai)
+
+        # ── 4. Storage Settings Group ────────────────────────────────
         storage_group = QGroupBox("Storage")
         storage_layout = QVBoxLayout(storage_group)
         storage_layout.setSpacing(12)
@@ -232,6 +315,15 @@ class TrackingSettingsDialog(QDialog):
         self.config.tracking_persistence = self.spin_pers.value()
         self.config.snapshot_on_motion = self.cb_snapshot.isChecked()
         self.config.snapshot_interval = round(self.spin_interval.value(), 1)
+        
+        # AI settings
+        self.config.ai_enabled = self.cb_ai_enabled.isChecked()
+        self.config.ai_confidence_threshold = round(self.spin_conf.value() / 100.0, 2)
+        self.config.ai_detect_person = self.cb_ai_person.isChecked()
+        self.config.ai_detect_vehicles = self.cb_ai_vehicles.isChecked()
+        self.config.ai_detect_animals = self.cb_ai_animals.isChecked()
+        self.config.ai_filter_snapshots = self.cb_ai_filter_snapshots.isChecked()
+
         if hasattr(self, '_pending_folder') and self._pending_folder:
             self.config.save_folder = self._pending_folder
             

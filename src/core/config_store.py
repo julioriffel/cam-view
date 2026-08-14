@@ -28,6 +28,13 @@ def save_config(config: DVRConfig) -> None:
         'tracking_persistence': config.tracking_persistence,
         'snapshot_on_motion': config.snapshot_on_motion,
         'snapshot_interval': config.snapshot_interval,
+        'ai_enabled': config.ai_enabled,
+        'ai_confidence_threshold': config.ai_confidence_threshold,
+        'ai_detect_person': config.ai_detect_person,
+        'ai_detect_vehicles': config.ai_detect_vehicles,
+        'ai_detect_animals': config.ai_detect_animals,
+        'ai_filter_snapshots': config.ai_filter_snapshots,
+        'channel_states': config.channel_states,
     }
     CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding='utf-8')
 
@@ -51,6 +58,13 @@ def load_config() -> DVRConfig | None:
             tracking_persistence=data.get('tracking_persistence', 5),
             snapshot_on_motion=data.get('snapshot_on_motion', True),
             snapshot_interval=float(data.get('snapshot_interval', 2.0)),
+            ai_enabled=data.get('ai_enabled', True),
+            ai_confidence_threshold=float(data.get('ai_confidence_threshold', 0.45)),
+            ai_detect_person=data.get('ai_detect_person', True),
+            ai_detect_vehicles=data.get('ai_detect_vehicles', True),
+            ai_detect_animals=data.get('ai_detect_animals', False),
+            ai_filter_snapshots=data.get('ai_filter_snapshots', True),
+            channel_states=data.get('channel_states', {}),
         )
     except (json.JSONDecodeError, KeyError, TypeError):
         return None

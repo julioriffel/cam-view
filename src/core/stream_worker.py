@@ -15,6 +15,8 @@ from PySide6.QtCore import QMutex, QMutexLocker, QThread, Signal
 from PySide6.QtGui import QImage, QPixmap
 
 from src.core.connection import DVRConfig
+from src.core.ai_detector import AIDetector
+
 
 class StreamWorker(QThread):
     """Background thread to process RTSP stream via OpenCV."""
@@ -34,12 +36,20 @@ class StreamWorker(QThread):
         self.save_folder = config.save_folder
         self._tracking_enabled = False
         
-        # Tracking parameters
+        # Motion tracking parameters
         self._filter_enabled = config.tracking_filter_enabled
         self._min_area = config.tracking_min_area
         self._persistence = config.tracking_persistence
         self._snapshot_on_motion = config.snapshot_on_motion
         self._snapshot_interval = float(config.snapshot_interval)
+
+        # AI Smart Vision parameters
+        self._ai_enabled = config.ai_enabled
+        self._ai_confidence = float(config.ai_confidence_threshold)
+        self._ai_detect_person = config.ai_detect_person
+        self._ai_detect_vehicles = config.ai_detect_vehicles
+        self._ai_detect_animals = config.ai_detect_animals
+        self._ai_filter_snapshots = config.ai_filter_snapshots
         
         self._running = False
         self._mutex = QMutex()
@@ -58,14 +68,26 @@ class StreamWorker(QThread):
         persistence: int,
         snapshot_on_motion: bool = True,
         snapshot_interval: float = 2.0,
+        ai_enabled: bool = False,
+        ai_confidence: float = 0.45,
+        ai_detect_person: bool = True,
+        ai_detect_vehicles: bool = True,
+        ai_detect_animals: bool = False,
+        ai_filter_snapshots: bool = True,
     ):
-        """Dynamically update tracking sensitivity and snapshot parameters."""
+        """Dynamically update tracking sensitivity, snapshot, and AI parameters."""
         with QMutexLocker(self._mutex):
             self._filter_enabled = filter_enabled
             self._min_area = min_area
             self._persistence = persistence
             self._snapshot_on_motion = snapshot_on_motion
             self._snapshot_interval = float(snapshot_interval)
+            self._ai_enabled = ai_enabled
+            self._ai_confidence = float(ai_confidence)
+            self._ai_detect_person = ai_detect_person
+            self._ai_detect_vehicles = ai_detect_vehicles
+            self._ai_detect_animals = ai_detect_animals
+            self._ai_filter_snapshots = ai_filter_snapshots
 
     def is_tracking(self) -> bool:
         with QMutexLocker(self._mutex):
@@ -121,6 +143,12 @@ class StreamWorker(QThread):
                     persistence = self._persistence
                     snapshot_on_motion = self._snapshot_on_motion
                     snapshot_interval = self._snapshot_interval
+                    ai_enabled = self._ai_enabled
+                    ai_conf = self._ai_confidence
+                    ai_person = self._ai_detect_person
+                    ai_vehicles = self._ai_detect_vehicles
+                    ai_animals = self._ai_detect_animals
+                    ai_filter_snapshots = self._ai_filter_snapshots
 
                 if tracking:
                     # Apply background subtraction
@@ -151,15 +179,47 @@ class StreamWorker(QThread):
                             
                         # Only trigger if motion persists for required frames
                         if consecutive_motion_frames >= persistence:
-                            for (x, y, w, h) in valid_contours:
-                                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                            target_detected = False
+
+                            if ai_enabled:
+                                allowed_categories = set()
+                                if ai_person:
+                                    allowed_categories.add('person')
+                                if ai_vehicles:
+                                    allowed_categories.add('vehicle')
+                                if ai_animals:
+                                    allowed_categories.add('animal')
+
+                                # Run lightweight AI detector on the frame
+                                detector = AIDetector.get_instance()
+                                detections = detector.detect(
+                                    frame,
+                                    conf_threshold=ai_conf,
+                                    allowed_categories=allowed_categories,
+                                )
+
+                                if len(detections) > 0:
+                                    target_detected = True
+                                    detector.draw_detections(frame, detections)
+                                else:
+                                    # If no AI target detected, render subtle motion boxes
+                                    for (x, y, w, h) in valid_contours:
+                                        cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 1)
+                            else:
+                                # Standard motion tracking boxes
+                                target_detected = True
+                                for (x, y, w, h) in valid_contours:
+                                    cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
                                 
                             if snapshot_on_motion:
-                                now = time.monotonic()
-                                # Save snapshot at most once every `snapshot_interval` seconds
-                                if now - self._last_snapshot_time >= snapshot_interval:
-                                    self._last_snapshot_time = now
-                                    self._save_snapshot(frame)
+                                # If ai_filter_snapshots is True and AI is enabled, require a recognized target
+                                should_snapshot = target_detected or (not ai_enabled) or (not ai_filter_snapshots)
+
+                                if should_snapshot:
+                                    now = time.monotonic()
+                                    if now - self._last_snapshot_time >= snapshot_interval:
+                                        self._last_snapshot_time = now
+                                        self._save_snapshot(frame)
                 else:
                     # Reset states when tracking is disabled
                     learning_frames = 30
