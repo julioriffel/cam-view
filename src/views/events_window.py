@@ -267,11 +267,18 @@ class EventsStatsWindow(QDialog):
 
         # ── 5. Bottom Action Bar ─────────────────────────────────────
         bottom_bar = QHBoxLayout()
+        bottom_bar.setSpacing(8)
 
-        btn_export = QPushButton("📤 Export Selection (CSV / JSON)...")
-        btn_export.setObjectName("exportBtn")
-        btn_export.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_export.clicked.connect(self._on_export_events)
+        btn_export_json = QPushButton("📦 Export JSON")
+        btn_export_json.setObjectName("exportBtn")
+        btn_export_json.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_export_json.setToolTip("Export selected events as JSON data (*.json)")
+        btn_export_json.clicked.connect(lambda: self._on_export_events('json'))
+
+        btn_export_csv = QPushButton("📄 Export CSV")
+        btn_export_csv.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_export_csv.setToolTip("Export selected events as CSV spreadsheet (*.csv)")
+        btn_export_csv.clicked.connect(lambda: self._on_export_events('csv'))
 
         btn_open_snapshot = QPushButton("🖼️ Open Snapshot")
         btn_open_snapshot.clicked.connect(self._open_selected_snapshot)
@@ -282,7 +289,8 @@ class EventsStatsWindow(QDialog):
         btn_close = QPushButton("Close")
         btn_close.clicked.connect(self.accept)
 
-        bottom_bar.addWidget(btn_export)
+        bottom_bar.addWidget(btn_export_json)
+        bottom_bar.addWidget(btn_export_csv)
         bottom_bar.addWidget(btn_open_snapshot)
         bottom_bar.addWidget(btn_open_folder)
         bottom_bar.addStretch()
@@ -365,7 +373,7 @@ class EventsStatsWindow(QDialog):
         )
 
         # 3. Populate Detailed Event Log Table
-        events = self.db.query_events(
+        self._current_events = self.db.query_events(
             channel=channel,
             category=category,
             start_time=start_time,
@@ -373,10 +381,10 @@ class EventsStatsWindow(QDialog):
             limit=500
         )
 
-        self.log_count_label.setText(f"{len(events)} events shown (max 500)")
-        self.event_table.setRowCount(len(events))
+        self.log_count_label.setText(f"{len(self._current_events)} events shown (max 500)")
+        self.event_table.setRowCount(len(self._current_events))
 
-        for row_idx, ev in enumerate(events):
+        for row_idx, ev in enumerate(self._current_events):
             # Timestamp
             item_time = QTableWidgetItem(ev['datetime_str'])
             item_time.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -408,9 +416,8 @@ class EventsStatsWindow(QDialog):
                 item_snap.setForeground(QColor(Colors.TEXT_MUTED))
             item_snap.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
-            # Store snapshot path and raw dictionary in row data
+            # Store snapshot path in row data
             item_time.setData(Qt.ItemDataRole.UserRole, snap_path)
-            item_time.setData(Qt.ItemDataRole.UserRole + 1, ev)
 
             self.event_table.setItem(row_idx, 0, item_time)
             self.event_table.setItem(row_idx, 1, item_ch)
@@ -483,8 +490,8 @@ class EventsStatsWindow(QDialog):
         else:
             QMessageBox.warning(self, "Directory Not Found", f"Snapshot directory does not exist yet:\n{folder}")
 
-    def _on_export_events(self):
-        """Export selected events (or all filtered events) to CSV/JSON with optional snapshot image bundling."""
+    def _on_export_events(self, format_type: str = 'json'):
+        """Export selected events (or all filtered events) to JSON or CSV with optional snapshot image bundling."""
         selected_model_indexes = self.event_table.selectionModel().selectedRows()
         selected_rows = sorted(set(idx.row() for idx in selected_model_indexes))
 
@@ -494,8 +501,8 @@ class EventsStatsWindow(QDialog):
                 return
             reply = QMessageBox.question(
                 self,
-                "Export All Events",
-                f"No specific rows are selected.\nDo you want to export all {self.event_table.rowCount()} currently displayed events?",
+                f"Export All Events ({format_type.upper()})",
+                f"No specific rows are selected.\nDo you want to export all {self.event_table.rowCount()} currently displayed events to {format_type.upper()}?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.Yes,
             )
@@ -505,39 +512,56 @@ class EventsStatsWindow(QDialog):
 
         export_data = []
         for r in selected_rows:
-            item = self.event_table.item(r, 0)
-            if item:
-                ev_dict = item.data(Qt.ItemDataRole.UserRole + 1)
-                if ev_dict:
-                    export_data.append(ev_dict)
-                else:
-                    export_data.append({
-                        'datetime_str': self.event_table.item(r, 0).text(),
-                        'channel': self.event_table.item(r, 1).text(),
-                        'category': self.event_table.item(r, 2).text(),
-                        'label': self.event_table.item(r, 3).text(),
-                        'confidence': self.event_table.item(r, 4).text(),
-                        'snapshot_path': item.data(Qt.ItemDataRole.UserRole),
-                    })
+            if 0 <= r < len(self._current_events):
+                ev = self._current_events[r]
+                export_data.append({
+                    'id': ev.get('id'),
+                    'timestamp': float(ev.get('timestamp', 0)),
+                    'datetime_str': str(ev.get('datetime_str', '')),
+                    'channel': int(ev.get('channel', 1)),
+                    'category': str(ev.get('category', '')),
+                    'label': str(ev.get('label', '')),
+                    'confidence': float(ev.get('confidence', 0.0)),
+                    'snapshot_path': str(ev.get('snapshot_path')) if ev.get('snapshot_path') else None,
+                })
+            else:
+                item = self.event_table.item(r, 0)
+                export_data.append({
+                    'id': r + 1,
+                    'timestamp': time.time(),
+                    'datetime_str': self.event_table.item(r, 0).text(),
+                    'channel': int(self.event_table.item(r, 1).text().replace("CH", "").strip() or 1),
+                    'category': self.event_table.item(r, 2).text(),
+                    'label': self.event_table.item(r, 3).text(),
+                    'confidence': float(self.event_table.item(r, 4).text().replace("%", "").strip() or 0) / 100.0,
+                    'snapshot_path': str(item.data(Qt.ItemDataRole.UserRole)) if item and item.data(Qt.ItemDataRole.UserRole) else None,
+                })
 
         timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S')
-        default_path = str(Path.home() / f"camview_events_{timestamp_str}.csv")
-        file_path, selected_filter = QFileDialog.getSaveFileName(
+        is_json = format_type.lower() == 'json'
+
+        if is_json:
+            default_path = str(Path.home() / f"camview_events_{timestamp_str}.json")
+            file_filter = "JSON Files (*.json);;All Files (*)"
+        else:
+            default_path = str(Path.home() / f"camview_events_{timestamp_str}.csv")
+            file_filter = "CSV Files (*.csv);;All Files (*)"
+
+        file_path, _ = QFileDialog.getSaveFileName(
             self,
-            "Export Selected Events",
+            f"Export Selected Events ({format_type.upper()})",
             default_path,
-            "CSV Files (*.csv);;JSON Files (*.json)"
+            file_filter
         )
 
         if not file_path:
             return
 
         out_path = Path(file_path)
-        is_json = out_path.suffix.lower() == '.json' or 'json' in selected_filter.lower()
-        if not is_json and not out_path.suffix:
-            out_path = out_path.with_suffix('.csv')
-        elif is_json and not out_path.suffix:
+        if is_json and out_path.suffix.lower() != '.json':
             out_path = out_path.with_suffix('.json')
+        elif not is_json and out_path.suffix.lower() != '.csv':
+            out_path = out_path.with_suffix('.csv')
 
         try:
             if is_json:
