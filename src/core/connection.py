@@ -34,6 +34,9 @@ class DVRConfig:
     ai_detect_vehicles: bool = True
     ai_detect_animals: bool = False
     ai_filter_snapshots: bool = True
+    notifications_enabled: bool = True
+    minimize_to_tray: bool = True
+    notification_cooldown: float = 5.0
     channel_states: dict = field(default_factory=dict)
 
 

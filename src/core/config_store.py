@@ -34,6 +34,9 @@ def save_config(config: DVRConfig) -> None:
         'ai_detect_vehicles': config.ai_detect_vehicles,
         'ai_detect_animals': config.ai_detect_animals,
         'ai_filter_snapshots': config.ai_filter_snapshots,
+        'notifications_enabled': config.notifications_enabled,
+        'minimize_to_tray': config.minimize_to_tray,
+        'notification_cooldown': config.notification_cooldown,
         'channel_states': config.channel_states,
     }
     CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding='utf-8')
@@ -64,6 +67,9 @@ def load_config() -> DVRConfig | None:
             ai_detect_vehicles=data.get('ai_detect_vehicles', True),
             ai_detect_animals=data.get('ai_detect_animals', False),
             ai_filter_snapshots=data.get('ai_filter_snapshots', True),
+            notifications_enabled=data.get('notifications_enabled', True),
+            minimize_to_tray=data.get('minimize_to_tray', True),
+            notification_cooldown=float(data.get('notification_cooldown', 5.0)),
             channel_states=data.get('channel_states', {}),
         )
     except (json.JSONDecodeError, KeyError, TypeError):

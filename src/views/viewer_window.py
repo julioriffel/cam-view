@@ -1,13 +1,16 @@
-"""Main camera grid viewer window for the DVR Viewer."""
-
 import math
+import time
+from pathlib import Path
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QGridLayout, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFrame, QToolBar, QStatusBar, QSizePolicy,
-    QFileDialog, QComboBox
+    QFileDialog, QComboBox, QSystemTrayIcon, QMenu
 )
-from PySide6.QtCore import Qt, QTimer, Signal, QSize
-from PySide6.QtGui import QPixmap, QColor, QPainter, QShortcut, QKeySequence
+from PySide6.QtCore import Qt, QTimer, Signal, QSize, QUrl
+from PySide6.QtGui import (
+    QPixmap, QColor, QPainter, QShortcut, QKeySequence,
+    QIcon, QDesktopServices
+)
 
 from src.core.connection import DVRConfig, build_rtsp_url
 from src.core.stream_worker import StreamWorker
@@ -390,13 +393,83 @@ class ViewerWindow(QMainWindow):
         self.tiles: list[CameraTile] = []
         self._fullscreen_channel: int | None = None
         self._uptime_seconds = 0
+        self._channel_metrics: dict[int, dict] = {}
+        self._last_notification_times: dict[int, float] = {}
+        self._last_alert_snapshot_path: str | None = None
 
         self.setWindowTitle(f'CamView — {config.host} ({config.channels} CH)')
         self.setMinimumSize(960, 640)
         self.resize(1280, 800)
 
+        self._init_tray_icon()
         self._setup_ui()
         self._start_streams()
+
+    def _init_tray_icon(self):
+        """Setup system tray icon with Nano Banana icon and context menu."""
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            self.tray_icon = None
+            return
+
+        icon_path = Path(__file__).parent.parent / 'assets' / 'icon.jpg'
+        icon = QIcon(str(icon_path)) if icon_path.exists() else QIcon()
+
+        self.tray_icon = QSystemTrayIcon(icon, self)
+        self.tray_icon.setToolTip(f"CamView — {self.config.host} ({self.config.channels} CH)")
+
+        # Context Menu
+        menu = QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {Colors.BG_PRIMARY};
+                color: {Colors.TEXT_PRIMARY};
+                border: 1px solid {Colors.BORDER};
+                border-radius: 6px;
+                padding: 4px;
+            }}
+            QMenu::item {{
+                padding: 6px 20px;
+                border-radius: 4px;
+            }}
+            QMenu::item:selected {{
+                background-color: {Colors.ACCENT};
+                color: #ffffff;
+            }}
+        """)
+
+        act_show = menu.addAction("👁️ Show CamView")
+        act_show.triggered.connect(self._restore_from_tray)
+
+        act_settings = menu.addAction("⚙️ Settings...")
+        act_settings.triggered.connect(self._show_settings)
+
+        menu.addSeparator()
+
+        act_quit = menu.addAction("❌ Quit CamView")
+        act_quit.triggered.connect(self._quit_application)
+
+        self.tray_icon.setContextMenu(menu)
+        self.tray_icon.activated.connect(self._on_tray_activated)
+        self.tray_icon.messageClicked.connect(self._on_tray_message_clicked)
+        self.tray_icon.show()
+
+    def _on_tray_activated(self, reason):
+        if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):
+            if self.isVisible() and not self.isMinimized():
+                self.hide()
+            else:
+                self._restore_from_tray()
+
+    def _restore_from_tray(self):
+        self.showNormal()
+        self.activateWindow()
+        self.raise_()
+
+    def _on_tray_message_clicked(self):
+        """Open the snapshot referrer file if present and bring app to front."""
+        if self._last_alert_snapshot_path and Path(self._last_alert_snapshot_path).exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(self._last_alert_snapshot_path))
+        self._restore_from_tray()
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -510,17 +583,38 @@ class ViewerWindow(QMainWindow):
         self.setStatusBar(status_bar)
 
         self.connected_label = QLabel('Channels: 0/0')
-        self.connected_label.setStyleSheet(f'color: {Colors.TEXT_MUTED}; font-size: 11px; background: transparent; border: none;')
+        self.connected_label.setStyleSheet(f'color: {Colors.TEXT_PRIMARY}; font-size: 11px; font-weight: 600; background: transparent; border: none;')
+
+        self.bitrate_label = QLabel('🌐 0.0 KB/s')
+        self.bitrate_label.setStyleSheet(f'color: {Colors.ACCENT}; font-size: 11px; font-weight: 600; background: transparent; border: none;')
+
+        self.latency_label = QLabel('⏱️ -- ms')
+        self.latency_label.setStyleSheet(f'color: {Colors.TEXT_SECONDARY}; font-size: 11px; background: transparent; border: none;')
+
+        self.health_label = QLabel('🟢 0 Drops')
+        self.health_label.setStyleSheet(f'color: {Colors.SUCCESS}; font-size: 11px; font-weight: 600; background: transparent; border: none;')
+
         self.uptime_label = QLabel('Uptime: 00:00:00')
         self.uptime_label.setStyleSheet(f'color: {Colors.TEXT_MUTED}; font-size: 11px; background: transparent; border: none;')
 
         status_bar.addWidget(self.connected_label)
+        status_bar.addWidget(self._make_status_sep())
+        status_bar.addWidget(self.bitrate_label)
+        status_bar.addWidget(self._make_status_sep())
+        status_bar.addWidget(self.latency_label)
+        status_bar.addWidget(self._make_status_sep())
+        status_bar.addWidget(self.health_label)
         status_bar.addPermanentWidget(self.uptime_label)
 
         # Uptime timer
         self._uptime_timer = QTimer(self)
         self._uptime_timer.timeout.connect(self._update_uptime)
         self._uptime_timer.start(1000)
+
+    def _make_status_sep(self) -> QLabel:
+        sep = QLabel('│')
+        sep.setStyleSheet('color: rgba(255, 255, 255, 0.15); font-size: 10px; margin: 0 4px; background: transparent; border: none;')
+        return sep
 
     def _start_streams(self):
         # Ensure channel_states dict exists
@@ -557,6 +651,8 @@ class ViewerWindow(QMainWindow):
         worker.status_changed.connect(self.tiles[index].update_status)
         worker.tracking_status_changed.connect(self.tiles[index].set_tracking_visible)
         worker.status_changed.connect(lambda s, ch=channel: self._on_channel_status(ch, s))
+        worker.metrics_updated.connect(self._on_worker_metrics)
+        worker.alert_triggered.connect(self._on_worker_alert)
         self.workers[index] = worker
         worker.start()
 
@@ -575,6 +671,9 @@ class ViewerWindow(QMainWindow):
             self.workers[index].wait(2000)
             self.workers[index] = None
 
+        # Clear metric for stopped channel
+        self._channel_metrics.pop(channel, None)
+
         if mode == 'OFF':
             self.tiles[index].set_disabled_state()
         else:
@@ -589,20 +688,83 @@ class ViewerWindow(QMainWindow):
                 self.tiles[index].set_tracking_visible(True)
             
         self._update_connected_count()
+        self._update_network_diagnostics()
 
     def _on_channel_status(self, channel: int, status: str):
+        if status in ('stopped', 'error'):
+            self._channel_metrics.pop(channel, None)
         self._update_connected_count()
+        self._update_network_diagnostics()
+
+    def _on_worker_metrics(self, data: dict):
+        channel = data.get('channel')
+        if channel is not None:
+            self._channel_metrics[channel] = data
+            self._update_network_diagnostics()
+
+    def _update_network_diagnostics(self):
+        active_channels = [
+            w.channel for w in self.workers if w is not None and w.isRunning()
+        ]
+
+        if not active_channels:
+            self.bitrate_label.setText('🌐 0.0 KB/s')
+            self.latency_label.setText('⏱️ -- ms')
+            self.health_label.setText('⚪ Idle')
+            self.health_label.setStyleSheet(f'color: {Colors.TEXT_MUTED}; font-size: 11px; font-weight: 600; background: transparent; border: none;')
+            return
+
+        total_bytes_sec = 0.0
+        total_latency = 0.0
+        total_dropped = 0
+        interval_dropped = 0
+        valid_count = 0
+
+        for ch in active_channels:
+            m = self._channel_metrics.get(ch)
+            if m:
+                total_bytes_sec += m.get('bytes_per_sec', 0.0)
+                total_latency += m.get('latency_ms', 0.0)
+                total_dropped += m.get('total_dropped', 0)
+                interval_dropped += m.get('interval_dropped', 0)
+                valid_count += 1
+
+        # 1. Format Live Bitrate
+        if total_bytes_sec >= 1_000_000:
+            mb_s = total_bytes_sec / 1_000_000.0
+            self.bitrate_label.setText(f'🌐 {mb_s:.2f} MB/s')
+        else:
+            kb_s = total_bytes_sec / 1_000.0
+            self.bitrate_label.setText(f'🌐 {kb_s:.1f} KB/s')
+
+        # 2. Format Latency
+        if valid_count > 0:
+            avg_lat = total_latency / valid_count
+            self.latency_label.setText(f'⏱️ ~{avg_lat:.0f} ms')
+        else:
+            self.latency_label.setText('⏱️ -- ms')
+
+        # 3. Format Stream Health & Drops
+        if interval_dropped > 0:
+            self.health_label.setText(f'🔴 Jitter (+{interval_dropped} drops)')
+            self.health_label.setStyleSheet(f'color: {Colors.ERROR}; font-size: 11px; font-weight: 600; background: transparent; border: none;')
+        elif total_dropped > 0:
+            self.health_label.setText(f'🟡 {total_dropped} Drops')
+            self.health_label.setStyleSheet(f'color: {Colors.WARNING}; font-size: 11px; font-weight: 600; background: transparent; border: none;')
+        else:
+            self.health_label.setText('🟢 0 Drops (Stable)')
+            self.health_label.setStyleSheet(f'color: {Colors.SUCCESS}; font-size: 11px; font-weight: 600; background: transparent; border: none;')
 
     def _update_connected_count(self):
         live = sum(1 for w in self.workers if w is not None and w.isRunning())
-        self.connected_label.setText(f'  Channels: {live}/{self.config.channels}  ')
+        self.connected_label.setText(f'Channels: {live}/{self.config.channels}')
 
     def _update_uptime(self):
         self._uptime_seconds += 1
         h = self._uptime_seconds // 3600
         m = (self._uptime_seconds % 3600) // 60
         s = self._uptime_seconds % 60
-        self.uptime_label.setText(f'  Uptime: {h:02d}:{m:02d}:{s:02d}  ')
+        self.uptime_label.setText(f'Uptime: {h:02d}:{m:02d}:{s:02d}')
 
     def _show_settings(self):
         dialog = TrackingSettingsDialog(self.config, self)
@@ -665,6 +827,34 @@ class ViewerWindow(QMainWindow):
         self.config.channel_states.setdefault(str(ch), {})['tracking'] = new_state
         config_store.save_config(self.config)
 
+    def _on_worker_alert(self, alert_data: dict):
+        """Display native desktop notification and store snapshot path for click action."""
+        if not getattr(self.config, 'notifications_enabled', True):
+            return
+
+        ch = alert_data.get('channel', 1)
+        now = time.monotonic()
+        last_time = self._last_notification_times.get(ch, 0.0)
+        cooldown = max(1.0, float(getattr(self.config, 'notification_cooldown', 5.0)))
+
+        if now - last_time < cooldown:
+            return  # Cooldown active
+
+        self._last_notification_times[ch] = now
+        snapshot_path = alert_data.get('snapshot_path')
+        if snapshot_path:
+            self._last_alert_snapshot_path = snapshot_path
+
+        label = alert_data.get('label', 'Motion Detected')
+        category = alert_data.get('category', 'motion')
+
+        icon_prefix = "🚶" if category == "person" else ("🚗" if category == "vehicle" else ("🐾" if category == "animal" else "🏃"))
+        title = f"{icon_prefix} Alert: Channel {ch}"
+        message = f"{label}\n(Click to view snapshot)" if snapshot_path else label
+
+        if hasattr(self, 'tray_icon') and self.tray_icon and self.tray_icon.isVisible():
+            self.tray_icon.showMessage(title, message, QSystemTrayIcon.MessageIcon.Information, 4000)
+
     def _show_grid(self):
         self._fullscreen_channel = None
         for tile in self.tiles:
@@ -672,6 +862,8 @@ class ViewerWindow(QMainWindow):
 
     def _on_disconnect(self):
         self._stop_all_streams()
+        if hasattr(self, 'tray_icon') and self.tray_icon:
+            self.tray_icon.hide()
         self.disconnected.emit()
         self.close()
 
@@ -685,7 +877,24 @@ class ViewerWindow(QMainWindow):
         self.workers = [None] * self.config.channels
 
     def closeEvent(self, event):
+        if getattr(self.config, 'minimize_to_tray', True) and hasattr(self, 'tray_icon') and self.tray_icon and self.tray_icon.isVisible():
+            event.ignore()
+            self.hide()
+            self.tray_icon.showMessage(
+                'CamView',
+                'CamView is running in the background. Surveillance active.',
+                QSystemTrayIcon.MessageIcon.Information,
+                2500
+            )
+        else:
+            self._quit_application()
+            super().closeEvent(event)
+
+    def _quit_application(self):
+        """Gracefully stop background streams and close the window."""
         self._stop_all_streams()
-        if self._uptime_timer.isActive():
+        if hasattr(self, '_uptime_timer') and self._uptime_timer.isActive():
             self._uptime_timer.stop()
-        super().closeEvent(event)
+        if hasattr(self, 'tray_icon') and self.tray_icon:
+            self.tray_icon.hide()
+        self.close()

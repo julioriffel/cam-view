@@ -25,6 +25,8 @@ class StreamWorker(QThread):
     fps_updated = Signal(float)
     status_changed = Signal(str)
     tracking_status_changed = Signal(bool)
+    metrics_updated = Signal(dict)
+    alert_triggered = Signal(dict)
 
     TARGET_FPS = 20.0
     MAX_RETRIES = 5
@@ -121,6 +123,11 @@ class StreamWorker(QThread):
             frame_count = 0
             fps_start_time = time.monotonic()
             frame_interval = 1.0 / self.TARGET_FPS
+            accumulated_latency = 0.0
+            accumulated_bytes = 0.0
+            total_dropped = 0
+            interval_dropped = 0
+            last_frame_time = 0.0
             
             # Motion detection setup
             bg_subtractor = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=50, detectShadows=False)
@@ -132,9 +139,21 @@ class StreamWorker(QThread):
             while self._running:
                 loop_start = time.monotonic()
 
+                grab_start = time.monotonic()
                 ret, frame = cap.read()
+                grab_latency_ms = (time.monotonic() - grab_start) * 1000.0
+
                 if not ret or frame is None:
                     break  # Stream dropped, will try to reconnect
+
+                now_time = time.monotonic()
+                if last_frame_time > 0.0:
+                    delta = now_time - last_frame_time
+                    if delta > 1.7 * frame_interval:
+                        dropped_est = max(1, int(round(delta / frame_interval)) - 1)
+                        total_dropped += dropped_est
+                        interval_dropped += dropped_est
+                last_frame_time = now_time
 
                 with QMutexLocker(self._mutex):
                     tracking = self._tracking_enabled
@@ -180,6 +199,8 @@ class StreamWorker(QThread):
                         # Only trigger if motion persists for required frames
                         if consecutive_motion_frames >= persistence:
                             target_detected = False
+                            alert_label = "Motion Detected"
+                            alert_category = "motion"
 
                             if ai_enabled:
                                 allowed_categories = set()
@@ -201,6 +222,8 @@ class StreamWorker(QThread):
                                 if len(detections) > 0:
                                     target_detected = True
                                     detector.draw_detections(frame, detections)
+                                    alert_label = ", ".join([f"{d.class_name.capitalize()} ({int(d.confidence * 100)}%)" for d in detections[:2]])
+                                    alert_category = detections[0].category
                                 else:
                                     # If no AI target detected, render subtle motion boxes
                                     for (x, y, w, h) in valid_contours:
@@ -211,6 +234,7 @@ class StreamWorker(QThread):
                                 for (x, y, w, h) in valid_contours:
                                     cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
                                 
+                            snapshot_path = None
                             if snapshot_on_motion:
                                 # If ai_filter_snapshots is True and AI is enabled, require a recognized target
                                 should_snapshot = target_detected or (not ai_enabled) or (not ai_filter_snapshots)
@@ -219,7 +243,17 @@ class StreamWorker(QThread):
                                     now = time.monotonic()
                                     if now - self._last_snapshot_time >= snapshot_interval:
                                         self._last_snapshot_time = now
-                                        self._save_snapshot(frame)
+                                        snapshot_path = self._save_snapshot(frame)
+
+                            # Emit alert event for desktop notifications
+                            if target_detected:
+                                self.alert_triggered.emit({
+                                    'channel': self.channel,
+                                    'label': alert_label,
+                                    'category': alert_category,
+                                    'snapshot_path': snapshot_path,
+                                    'timestamp': time.monotonic(),
+                                })
                 else:
                     # Reset states when tracking is disabled
                     learning_frames = 30
@@ -236,12 +270,36 @@ class StreamWorker(QThread):
 
                 self.frame_ready.emit(pixmap)
 
-                # FPS calculation
+                # Metrics accumulation
                 frame_count += 1
+                accumulated_latency += grab_latency_ms
+                # Approximate H.264/H.265 compressed stream payload
+                est_bytes = (w * h * 3.0) / (60.0 if w >= 1280 else 40.0)
+                accumulated_bytes += est_bytes
+
+                # Periodic 1-second metrics calculation
                 elapsed = time.monotonic() - fps_start_time
                 if elapsed >= 1.0:
-                    self.fps_updated.emit(frame_count / elapsed)
+                    current_fps = frame_count / elapsed
+                    avg_latency = accumulated_latency / max(1, frame_count)
+                    bytes_per_sec = accumulated_bytes / elapsed
+
+                    self.fps_updated.emit(current_fps)
+                    self.metrics_updated.emit({
+                        'channel': self.channel,
+                        'fps': current_fps,
+                        'bytes_per_sec': bytes_per_sec,
+                        'latency_ms': avg_latency,
+                        'total_dropped': total_dropped,
+                        'interval_dropped': interval_dropped,
+                        'width': w,
+                        'height': h,
+                    })
+
                     frame_count = 0
+                    accumulated_latency = 0.0
+                    accumulated_bytes = 0.0
+                    interval_dropped = 0
                     fps_start_time = time.monotonic()
 
                 # FPS cap — sleep remaining time
@@ -268,16 +326,17 @@ class StreamWorker(QThread):
         """Signal the worker to stop gracefully."""
         self._running = False
 
-    def _save_snapshot(self, frame):
-        """Save a snapshot to the designated folder."""
+    def _save_snapshot(self, frame) -> str | None:
+        """Save a snapshot to the designated folder and return the saved path."""
         folder = Path(self.save_folder)
         try:
             folder.mkdir(parents=True, exist_ok=True)
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             filename = folder / f'CH{self.channel}_{timestamp}.jpg'
             cv2.imwrite(str(filename), frame)
+            return str(filename)
         except Exception:
-            pass  # Fail silently if directory is not writable
+            return None
 
     def _interruptible_sleep(self, seconds: float):
         """Sleep that can be interrupted by stop()."""

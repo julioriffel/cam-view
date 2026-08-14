@@ -32,9 +32,20 @@ Protected by our friendly neighborhood **Nano Banana** security guard! 🍌🛡�
   2. Dynamic Size Thresholding
   3. Temporal Debouncing (Requires motion persistence across multiple frames)
 
+### 🌐 Live Bandwidth & Network Health Monitor
+- **Real-time Throughput**: Continuous aggregate bitrate counter in the status bar (e.g. `450.0 KB/s` or `2.35 MB/s`).
+- **Connection Latency**: Live frame acquisition and decode delay indicator in milliseconds (`~24 ms`).
+- **Packet Loss & Jitter Tracking**: Dynamic health status badge (`🟢 0 Drops (Stable)` / `🟡 Recovered` / `🔴 Jitter`).
+
+### 🔔 System Tray & Desktop Notifications
+- **Background Surveillance (Default True)**: Closing the window docks CamView directly to the system tray so surveillance runs continuously in the background without taskbar clutter.
+- **Native Desktop Alerts**: Receives instant notifications when movement or AI targets (Person, Vehicle, Animal) appear.
+- **Click-to-Open Referrer Snapshot**: Clicking a notification opens the exact `.jpg` snapshot in your default image viewer and brings CamView to the front.
+- **Nano Banana Tray Menu**: Right-click the tray icon for quick access to Restore, Settings, and Quit.
+
 ### ⚙️ Real-time Settings Adjustments
-- Tweak the motion tracking, AI categories, and snapshot parameters on the fly via the **Settings Dialog**.
-- Adjust minimum object size, persistence frames, AI confidence threshold, target categories, snapshot interval, and save folder dynamically. The changes apply to all live feeds instantly without reconnecting!
+- Tweak the motion tracking, AI categories, snapshot parameters, and notification cooldown on the fly via the **Settings Dialog**.
+- Adjust minimum object size, persistence frames, AI confidence threshold, target categories, snapshot interval, minimize to tray toggle, and save folder dynamically.
 - Your settings and snapshot folder preferences are saved persistently.
 
 ## 🚀 Requirements
