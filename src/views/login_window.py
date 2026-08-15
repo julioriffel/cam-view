@@ -2,7 +2,7 @@
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QLineEdit, QPushButton, QSpinBox, QComboBox, QFrame,
+    QLineEdit, QPushButton, QSpinBox, QFrame,
     QGraphicsDropShadowEffect, QCheckBox,
 )
 from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, Signal, QThread
@@ -73,40 +73,6 @@ _SPINBOX_STYLE = f"""
         border-left: 4px solid transparent;
         border-right: 4px solid transparent;
         border-top: 5px solid {Colors.TEXT_SECONDARY};
-    }}
-"""
-
-_COMBO_STYLE = f"""
-    QComboBox {{
-        {_INPUT_BOX}
-        min-width: 100px;
-    }}
-    QComboBox:focus {{
-        {_INPUT_BOX_FOCUS}
-    }}
-    QComboBox::drop-down {{
-        subcontrol-origin: padding;
-        subcontrol-position: top right;
-        width: 28px;
-        border-left: 1px solid rgba(255,255,255,0.08);
-        border-top-right-radius: 8px;
-        border-bottom-right-radius: 8px;
-    }}
-    QComboBox::down-arrow {{
-        border-left: 4px solid transparent;
-        border-right: 4px solid transparent;
-        border-top: 5px solid {Colors.TEXT_SECONDARY};
-        margin-right: 6px;
-    }}
-    QComboBox QAbstractItemView {{
-        background-color: #1a1a3e;
-        color: {Colors.TEXT_PRIMARY};
-        border: 1px solid rgba(255,255,255,0.10);
-        border-radius: 6px;
-        selection-background-color: {Colors.ACCENT};
-        selection-color: #ffffff;
-        outline: none;
-        padding: 4px;
     }}
 """
 
@@ -340,31 +306,13 @@ class LoginWindow(QMainWindow):
         self.pass_input.setStyleSheet(_LINE_EDIT_STYLE)
         cl.addWidget(self.pass_input)
 
-        # ── Channels + Stream Quality Row ──
-        ch_stream = QHBoxLayout()
-        ch_stream.setSpacing(10)
-
-        ch_col = QVBoxLayout()
-        ch_col.setSpacing(4)
-        ch_col.addWidget(self._make_label('Channels'))
+        # ── Channels ──
+        cl.addWidget(self._make_label('Channels'))
         self.channels_input = QSpinBox()
         self.channels_input.setRange(1, 16)
         self.channels_input.setValue(4)
         self.channels_input.setStyleSheet(_SPINBOX_STYLE)
-        ch_col.addWidget(self.channels_input)
-
-        stream_col = QVBoxLayout()
-        stream_col.setSpacing(4)
-        stream_col.addWidget(self._make_label('Stream Quality'))
-        self.stream_combo = QComboBox()
-        self.stream_combo.addItem('Extra Stream (Recommended)', 1)
-        self.stream_combo.addItem('Main Stream (Full HD)', 0)
-        self.stream_combo.setStyleSheet(_COMBO_STYLE)
-        stream_col.addWidget(self.stream_combo)
-
-        ch_stream.addLayout(ch_col, 1)
-        ch_stream.addLayout(stream_col, 2)
-        cl.addLayout(ch_stream)
+        cl.addWidget(self.channels_input)
 
         # ── Save Config Checkbox ──
         self.save_checkbox = QCheckBox(" Remember login info")
@@ -424,9 +372,6 @@ class LoginWindow(QMainWindow):
             self.user_input.setText(saved_config.username)
             self.pass_input.setText(saved_config.password)
             self.channels_input.setValue(saved_config.channels)
-            idx = self.stream_combo.findData(saved_config.subtype)
-            if idx >= 0:
-                self.stream_combo.setCurrentIndex(idx)
             self.save_checkbox.setChecked(True)
         else:
             self.user_input.setText("admin")
@@ -454,7 +399,8 @@ class LoginWindow(QMainWindow):
         existing.username = self.user_input.text().strip()
         existing.password = self.pass_input.text()
         existing.channels = self.channels_input.value()
-        existing.subtype = self.stream_combo.currentData()
+        if not hasattr(existing, 'subtype') or existing.subtype is None:
+            existing.subtype = 1
         return existing
 
     def _on_test_connection(self):

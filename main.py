@@ -13,6 +13,7 @@ from src.styles.theme import get_global_stylesheet
 from src.views.login_window import LoginWindow
 from src.views.viewer_window import ViewerWindow
 from src.core.connection import DVRConfig
+from src.core.resource_path import get_asset_path
 
 
 class CamViewApp:
@@ -24,7 +25,7 @@ class CamViewApp:
         self.app.setOrganizationName("CamView")
 
         # Set application icon
-        icon_path = Path(__file__).parent / "src" / "assets" / "icon.jpg"
+        icon_path = get_asset_path("icon.jpg")
         if icon_path.exists():
             self.app.setWindowIcon(QIcon(str(icon_path)))
 

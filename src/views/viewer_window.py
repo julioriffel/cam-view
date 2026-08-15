@@ -18,6 +18,7 @@ from src.core import config_store
 from src.views.settings_dialog import TrackingSettingsDialog
 from src.views.events_window import EventsStatsWindow
 from src.styles.theme import Colors
+from src.core.resource_path import get_asset_path
 
 
 # ── Tile styles ──────────────────────────────────────────────────
@@ -412,7 +413,7 @@ class ViewerWindow(QMainWindow):
             self.tray_icon = None
             return
 
-        icon_path = Path(__file__).parent.parent / 'assets' / 'icon.jpg'
+        icon_path = get_asset_path('icon.jpg')
         icon = QIcon(str(icon_path)) if icon_path.exists() else QIcon()
 
         self.tray_icon = QSystemTrayIcon(icon, self)

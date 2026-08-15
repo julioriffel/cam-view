@@ -345,8 +345,16 @@ class StreamWorker(QThread):
         folder = Path(self.save_folder)
         try:
             folder.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            filename = folder / f'CH{self.channel}_{timestamp}.jpg'
+            now = datetime.now()
+            # Format: CH{channel}_{datetime}_{milliseconds}.jpg (e.g. CH1_20260814_091530_123.jpg)
+            # Includes millisecond precision to allow storing multiple snapshots in the same second for the same camera.
+            timestamp = now.strftime('%Y%m%d_%H%M%S') + f"_{now.microsecond // 1000:03d}"
+            filename = folder / f"CH{self.channel}_{timestamp}.jpg"
+            if filename.exists():
+                counter = 1
+                while filename.exists():
+                    filename = folder / f"CH{self.channel}_{timestamp}_{counter}.jpg"
+                    counter += 1
             cv2.imwrite(str(filename), frame)
             return str(filename)
         except Exception:

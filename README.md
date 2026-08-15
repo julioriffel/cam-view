@@ -107,17 +107,129 @@ Protected by our friendly neighborhood **Nano Banana** security guard! 🍌🛡�
 
 ---
 
-## 🎮 Usage
+## 🎮 Usage & Makefile Shortcuts
 
-Launch the application:
+You can run and build the project using either `make` shortcuts or `uv` directly:
 
 ```bash
-uv run python main.py
+# Display all available shortcuts
+make help
+
+# Run in development mode
+make run
+# or: uv run python main.py
 ```
 
 ### Keyboard Shortcuts
 - **`Ctrl+1`**, **`Ctrl+2`**... **`Ctrl+9`**: Toggle motion tracking on/off for specific camera channels.
 - **`Ctrl+E`**: Open the AI Object Detection History & Statistics Dashboard.
+
+---
+
+## 📦 Building Standalone Executables
+
+CamView includes build tools powered by **PyInstaller** to produce self-contained standalone executable binaries for **Linux**, **Windows**, and **macOS**. The bundled executables include all UI assets, Qt dynamic plugins, OpenCV engines, and AI models—meaning end users **do not need Python installed**.
+
+### ⚡ Quick Build (Current OS)
+
+```bash
+# Install dependencies including build tools
+make install
+
+# Compile a standalone single-file binary for your current OS
+make build
+```
+The compiled binary will be placed in the `dist/` directory.
+
+---
+
+### 🐧 Linux Build
+
+Run on any Linux distribution (Ubuntu, Debian, Fedora, Arch, etc.):
+
+```bash
+make build-linux
+# Output: dist/CamView-Linux-x86_64 (or dist/CamView)
+```
+
+To run the binary directly:
+```bash
+./dist/CamView
+```
+
+> **Note for Linux**: If running on minimal desktop environments, ensure `libxcb-cursor0` is installed (`sudo apt-get install -y libxcb-cursor0`).
+
+---
+
+### 🪟 Windows Build (`.exe`)
+
+#### Option A — Native Build (on Windows)
+In PowerShell or CMD with [uv](https://docs.astral.sh/uv/) installed:
+```powershell
+uv sync --all-extras
+uv run python build.py --onefile
+# Output: dist\CamView.exe
+```
+
+#### Option B — Automated GitHub Actions CI/CD (Recommended for cross-compiling)
+CamView includes a GitHub Actions workflow (`.github/workflows/build.yml`). Simply push your code or trigger a workflow dispatch on GitHub to automatically compile native `.exe` binaries on Microsoft Windows runners and download the build artifact.
+
+---
+
+### 🍏 macOS Build (`.app` Bundle)
+
+#### Option A — Native Build (on macOS)
+```bash
+make install
+make build-macos
+# Output: dist/CamView.app
+```
+
+Launch with:
+```bash
+open dist/CamView.app
+```
+
+#### Option B — Automated GitHub Actions CI/CD
+GitHub Actions will automatically run the build matrix on macOS runners and package the resulting `.app` bundle into downloadable artifacts.
+
+---
+
+### 🛠️ Advanced Build Options
+
+The `build.py` script offers customizable build flags:
+
+```bash
+# Single-file binary (default)
+uv run python build.py --onefile
+
+# Directory distribution (faster launch, libraries alongside binary)
+uv run python build.py --onedir
+
+# Debug build (leaves console terminal open to inspect RTSP/OpenCV logs)
+uv run python build.py --onefile --debug
+
+# Custom executable name
+uv run python build.py --onefile --name "MyCamView"
+```
+
+---
+
+### 📋 Makefile Cheatsheet
+
+| Target | Description |
+|---|---|
+| `make help` | Display formatted list of all available commands |
+| `make install` | Install all runtime and build dependencies via UV |
+| `make run` | Launch CamView in development mode from source |
+| `make build` | Compile single-file standalone executable for the current OS |
+| `make build-dir` | Compile directory distribution for current OS |
+| `make build-debug` | Compile executable with terminal console attached for debugging |
+| `make build-linux` | Compile Linux standalone binary (`dist/CamView`) |
+| `make build-windows` | Compile Windows executable (`dist/CamView.exe`) |
+| `make build-macos` | Compile macOS `.app` bundle |
+| `make check` | Run Python syntax and compilation check across all files |
+| `make clean` | Remove `build/`, `dist/`, and Python cache artifacts |
 
 ---
 

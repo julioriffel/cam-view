@@ -15,6 +15,12 @@ env/
 *.swp
 *.swo
 
+# PyInstaller / Build artifacts
+build/
+dist/
+CamView*.spec
+*.spec.bak
+
 # OS generated files
 .DS_Store
 Thumbs.db

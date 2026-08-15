@@ -1,0 +1,63 @@
+name: Build Standalone Executables
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: CamView-linux-x86_64
+            target_path: dist/CamView
+            build_cmd: uv run python build.py --onefile --name CamView
+          - os: windows-latest
+            artifact_name: CamView-windows-x64.exe
+            target_path: dist/CamView.exe
+            build_cmd: uv run python build.py --onefile --name CamView
+          - os: macos-latest
+            artifact_name: CamView-macos-universal
+            target_path: dist/CamView
+            build_cmd: uv run python build.py --onefile --name CamView
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install Linux System Dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-cursor0 libgl1-mesa-glx libegl1-mesa
+
+      - name: Install Project & Build Dependencies
+        run: uv sync --all-extras
+
+      - name: Build Executable
+        run: ${{ matrix.build_cmd }}
+
+      - name: Upload Binary Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.target_path }}
+          if-no-files-found: error
