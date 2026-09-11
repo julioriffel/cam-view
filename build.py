@@ -107,6 +107,7 @@ def build_executable(
         "threading",
         "queue",
         "src.core.connection",
+        "src.core.motion_detector",
         "src.core.stream_worker",
         "src.core.ai_detector",
         "src.core.event_db",

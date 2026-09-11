@@ -1,26 +1,31 @@
 """
-Background RTSP stream worker.
+Background RTSP stream worker with High-Performance Motion and Asynchronous AI Detection.
 
-Runs on a dedicated QThread, continuously reads frames from an RTSP source,
-converts them to QPixmap, and emits Qt signals for the UI to consume.
-Includes automatic reconnection with exponential back-off.
+Runs on a dedicated QThread:
+- Continuously reads frames from an RTSP source without blocking or stutter.
+- Executes downscaled motion detection (KNN / MOG2 with shadow suppression).
+- Dispatches AI object recognition asynchronously to avoid frame drops.
+- Converts video frames to QPixmap and emits Qt signals for the UI.
+- Includes automatic reconnection with exponential back-off.
 """
 
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import List, Optional
 
 import cv2
 from PySide6.QtCore import QMutex, QMutexLocker, QThread, Signal
 from PySide6.QtGui import QImage, QPixmap
 
 from src.core.connection import DVRConfig
-from src.core.ai_detector import AIDetector
+from src.core.motion_detector import MotionDetector
+from src.core.ai_detector import AIDetector, Detection
 from src.core.event_db import EventDatabase
 
 
 class StreamWorker(QThread):
-    """Background thread to process RTSP stream via OpenCV."""
+    """Background thread to process RTSP stream via OpenCV with non-blocking AI."""
 
     frame_ready = Signal(QPixmap)
     fps_updated = Signal(float)
@@ -38,22 +43,31 @@ class StreamWorker(QThread):
         self.channel = channel
         self.save_folder = config.save_folder
         self._tracking_enabled = False
-        
-        # Motion tracking parameters
-        self._filter_enabled = config.tracking_filter_enabled
-        self._min_area = config.tracking_min_area
-        self._persistence = config.tracking_persistence
+
+        # Motion detector module
+        self._motion_detector = MotionDetector(
+            algorithm=getattr(config, 'motion_algorithm', 'knn'),
+            target_width=getattr(config, 'motion_downscale_width', 480),
+            min_area=config.tracking_min_area,
+            persistence=config.tracking_persistence,
+            filter_enabled=config.tracking_filter_enabled,
+        )
+
+        # Snapshot and AI parameters
         self._snapshot_on_motion = config.snapshot_on_motion
         self._snapshot_interval = float(config.snapshot_interval)
-
-        # AI Smart Vision parameters
         self._ai_enabled = config.ai_enabled
         self._ai_confidence = float(config.ai_confidence_threshold)
         self._ai_detect_person = config.ai_detect_person
         self._ai_detect_vehicles = config.ai_detect_vehicles
         self._ai_detect_animals = config.ai_detect_animals
         self._ai_filter_snapshots = config.ai_filter_snapshots
-        
+
+        # Async AI tracking state
+        self._ai_busy = False
+        self._active_ai_detections: List[Detection] = []
+        self._ai_detections_expiry = 0.0
+
         self._running = False
         self._mutex = QMutex()
         self._last_snapshot_time = 0.0
@@ -62,13 +76,19 @@ class StreamWorker(QThread):
         """Enable or disable motion tracking overlays and snapshots."""
         with QMutexLocker(self._mutex):
             self._tracking_enabled = enabled
+            if not enabled:
+                self._motion_detector.reset()
+                self._active_ai_detections.clear()
+                self._ai_detections_expiry = 0.0
         self.tracking_status_changed.emit(enabled)
-        
+
     def update_tracking_params(
         self,
         filter_enabled: bool,
         min_area: int,
         persistence: int,
+        motion_algorithm: str = 'knn',
+        motion_downscale_width: int = 480,
         snapshot_on_motion: bool = True,
         snapshot_interval: float = 2.0,
         ai_enabled: bool = False,
@@ -80,9 +100,13 @@ class StreamWorker(QThread):
     ):
         """Dynamically update tracking sensitivity, snapshot, and AI parameters."""
         with QMutexLocker(self._mutex):
-            self._filter_enabled = filter_enabled
-            self._min_area = min_area
-            self._persistence = persistence
+            self._motion_detector.update_params(
+                algorithm=motion_algorithm,
+                min_area=min_area,
+                persistence=persistence,
+                filter_enabled=filter_enabled,
+                target_width=motion_downscale_width,
+            )
             self._snapshot_on_motion = snapshot_on_motion
             self._snapshot_interval = float(snapshot_interval)
             self._ai_enabled = ai_enabled
@@ -95,6 +119,75 @@ class StreamWorker(QThread):
     def is_tracking(self) -> bool:
         with QMutexLocker(self._mutex):
             return self._tracking_enabled
+
+    def _on_async_ai_finished(self, detections: List[Detection], snap_frame: Optional[cv2.Mat] = None):
+        """Callback executed on background thread when AI inference finishes."""
+        if not self._running:
+            self._ai_busy = False
+            return
+
+        now = time.monotonic()
+        self._ai_busy = False
+
+        with QMutexLocker(self._mutex):
+            snapshot_on_motion = self._snapshot_on_motion
+            snapshot_interval = self._snapshot_interval
+            ai_filter_snapshots = self._ai_filter_snapshots
+
+        if len(detections) > 0:
+            with QMutexLocker(self._mutex):
+                self._active_ai_detections = detections
+                # Keep active AI bounding boxes visible for 1.2s for smooth visual tracking
+                self._ai_detections_expiry = now + 1.2
+
+            alert_label = ", ".join(
+                [f"{d.class_name.capitalize()} ({int(d.confidence * 100)}%)" for d in detections[:2]]
+            )
+            alert_category = detections[0].category
+
+            snapshot_path = None
+            if snapshot_on_motion:
+                if now - self._last_snapshot_time >= snapshot_interval:
+                    self._last_snapshot_time = now
+                    if snap_frame is not None:
+                        # Draw bounding boxes onto the saved snapshot
+                        out_frame = snap_frame.copy()
+                        AIDetector.get_instance().draw_detections(out_frame, detections)
+                        snapshot_path = self._save_snapshot(out_frame)
+
+            # Log to SQLite Event database (with 10-second debounce per category)
+            db = EventDatabase.get_instance()
+            for d in detections:
+                db.log_event(
+                    channel=self.channel,
+                    category=d.category,
+                    label=f"{d.class_name.capitalize()} ({int(d.confidence * 100)}%)",
+                    confidence=d.confidence,
+                    snapshot_path=snapshot_path,
+                    cooldown=10.0,
+                )
+
+            # Emit alert event for desktop notifications and UI status
+            self.alert_triggered.emit({
+                'channel': self.channel,
+                'label': alert_label,
+                'category': alert_category,
+                'snapshot_path': snapshot_path,
+                'timestamp': now,
+            })
+        else:
+            # No AI targets recognized
+            if snapshot_on_motion and not ai_filter_snapshots:
+                if now - self._last_snapshot_time >= snapshot_interval:
+                    self._last_snapshot_time = now
+                    snapshot_path = self._save_snapshot(snap_frame) if snap_frame is not None else None
+                    self.alert_triggered.emit({
+                        'channel': self.channel,
+                        'label': "Motion Detected",
+                        'category': "motion",
+                        'snapshot_path': snapshot_path,
+                        'timestamp': now,
+                    })
 
     def run(self):
         self._running = True
@@ -129,13 +222,9 @@ class StreamWorker(QThread):
             total_dropped = 0
             interval_dropped = 0
             last_frame_time = 0.0
-            
-            # Motion detection setup
-            bg_subtractor = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=50, detectShadows=False)
-            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-            # Give the subtractor some frames to learn before triggering
-            learning_frames = 30
-            consecutive_motion_frames = 0
+
+            # Reset motion detector on connection
+            self._motion_detector.reset()
 
             while self._running:
                 loop_start = time.monotonic()
@@ -145,7 +234,7 @@ class StreamWorker(QThread):
                 grab_latency_ms = (time.monotonic() - grab_start) * 1000.0
 
                 if not ret or frame is None:
-                    break  # Stream dropped, will try to reconnect
+                    break  # Stream dropped, will reconnect
 
                 now_time = time.monotonic()
                 if last_frame_time > 0.0:
@@ -158,9 +247,6 @@ class StreamWorker(QThread):
 
                 with QMutexLocker(self._mutex):
                     tracking = self._tracking_enabled
-                    filter_enabled = self._filter_enabled
-                    min_area = self._min_area
-                    persistence = self._persistence
                     snapshot_on_motion = self._snapshot_on_motion
                     snapshot_interval = self._snapshot_interval
                     ai_enabled = self._ai_enabled
@@ -169,41 +255,18 @@ class StreamWorker(QThread):
                     ai_vehicles = self._ai_detect_vehicles
                     ai_animals = self._ai_detect_animals
                     ai_filter_snapshots = self._ai_filter_snapshots
+                    active_detections = list(self._active_ai_detections)
+                    ai_expiry = self._ai_detections_expiry
 
                 if tracking:
-                    # Apply background subtraction
-                    mask = bg_subtractor.apply(frame)
-                    
-                    if learning_frames > 0:
-                        learning_frames -= 1
-                    else:
-                        if filter_enabled:
-                            # Morphological open to remove noise (bugs/rain)
-                            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-                        
-                        # Find contours of moving objects
-                        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                        
-                        frame_has_motion = False
-                        valid_contours = []
-                        
-                        for contour in contours:
-                            if cv2.contourArea(contour) > min_area:
-                                valid_contours.append(cv2.boundingRect(contour))
-                                frame_has_motion = True
-                                
-                        if frame_has_motion:
-                            consecutive_motion_frames += 1
-                        else:
-                            consecutive_motion_frames = 0
-                            
-                        # Only trigger if motion persists for required frames
-                        if consecutive_motion_frames >= persistence:
-                            target_detected = False
-                            alert_label = "Motion Detected"
-                            alert_category = "motion"
+                    # High-performance downscaled motion analysis
+                    has_raw, is_persistent, valid_boxes = self._motion_detector.process_frame(frame)
 
-                            if ai_enabled:
+                    if is_persistent:
+                        if ai_enabled:
+                            # Submit frame for asynchronous detection if AI worker is idle
+                            if not self._ai_busy:
+                                self._ai_busy = True
                                 allowed_categories = set()
                                 if ai_person:
                                     allowed_categories.add('person')
@@ -212,66 +275,43 @@ class StreamWorker(QThread):
                                 if ai_animals:
                                     allowed_categories.add('animal')
 
-                                # Run lightweight AI detector on the frame
-                                detector = AIDetector.get_instance()
-                                detections = detector.detect(
-                                    frame,
+                                frame_copy = frame.copy()
+                                AIDetector.get_instance().detect_async(
+                                    frame=frame_copy,
                                     conf_threshold=ai_conf,
                                     allowed_categories=allowed_categories,
+                                    callback=lambda dets, snap=frame_copy: self._on_async_ai_finished(dets, snap),
                                 )
 
-                                if len(detections) > 0:
-                                    target_detected = True
-                                    detector.draw_detections(frame, detections)
-                                    alert_label = ", ".join([f"{d.class_name.capitalize()} ({int(d.confidence * 100)}%)" for d in detections[:2]])
-                                    alert_category = detections[0].category
-                                else:
-                                    # If no AI target detected, render subtle motion boxes
-                                    for (x, y, w, h) in valid_contours:
-                                        cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 1)
+                            # Render current active AI detections if still valid
+                            if now_time < ai_expiry and len(active_detections) > 0:
+                                AIDetector.get_instance().draw_detections(frame, active_detections)
                             else:
-                                # Standard motion tracking boxes
-                                target_detected = True
-                                for (x, y, w, h) in valid_contours:
-                                    cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                                
+                                # Subtle motion bounding boxes while AI is processing or if no AI targets
+                                for (x, y, w, h) in valid_boxes:
+                                    cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 1)
+                        else:
+                            # Pure motion tracking without AI
+                            for (x, y, w, h) in valid_boxes:
+                                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
                             snapshot_path = None
                             if snapshot_on_motion:
-                                # If ai_filter_snapshots is True and AI is enabled, require a recognized target
-                                should_snapshot = target_detected or (not ai_enabled) or (not ai_filter_snapshots)
+                                if now_time - self._last_snapshot_time >= snapshot_interval:
+                                    self._last_snapshot_time = now_time
+                                    snapshot_path = self._save_snapshot(frame)
 
-                                if should_snapshot:
-                                    now = time.monotonic()
-                                    if now - self._last_snapshot_time >= snapshot_interval:
-                                        self._last_snapshot_time = now
-                                        snapshot_path = self._save_snapshot(frame)
-
-                            # Log AI detections to database (with 10-second debounce per category)
-                            if ai_enabled and len(detections) > 0:
-                                db = EventDatabase.get_instance()
-                                for d in detections:
-                                    db.log_event(
-                                        channel=self.channel,
-                                        category=d.category,
-                                        label=f"{d.class_name.capitalize()} ({int(d.confidence * 100)}%)",
-                                        confidence=d.confidence,
-                                        snapshot_path=snapshot_path,
-                                        cooldown=10.0,
-                                    )
-
-                            # Emit alert event for desktop notifications
-                            if target_detected:
-                                self.alert_triggered.emit({
-                                    'channel': self.channel,
-                                    'label': alert_label,
-                                    'category': alert_category,
-                                    'snapshot_path': snapshot_path,
-                                    'timestamp': time.monotonic(),
-                                })
-                else:
-                    # Reset states when tracking is disabled
-                    learning_frames = 30
-                    consecutive_motion_frames = 0
+                            self.alert_triggered.emit({
+                                'channel': self.channel,
+                                'label': "Motion Detected",
+                                'category': "motion",
+                                'snapshot_path': snapshot_path,
+                                'timestamp': now_time,
+                            })
+                    else:
+                        # If AI detection is active but motion subsided, still render smoothly until expiry
+                        if ai_enabled and now_time < ai_expiry and len(active_detections) > 0:
+                            AIDetector.get_instance().draw_detections(frame, active_detections)
 
                 # Convert BGR -> RGB -> QImage -> QPixmap
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -287,7 +327,6 @@ class StreamWorker(QThread):
                 # Metrics accumulation
                 frame_count += 1
                 accumulated_latency += grab_latency_ms
-                # Approximate H.264/H.265 compressed stream payload
                 est_bytes = (w * h * 3.0) / (60.0 if w >= 1280 else 40.0)
                 accumulated_bytes += est_bytes
 
@@ -325,7 +364,7 @@ class StreamWorker(QThread):
             cap.release()
 
             if self._running:
-                # Stream dropped unexpectedly, try to reconnect
+                # Stream dropped unexpectedly, attempt reconnect
                 retry_count += 1
                 if retry_count > self.MAX_RETRIES:
                     self.status_changed.emit('error')
@@ -340,14 +379,14 @@ class StreamWorker(QThread):
         """Signal the worker to stop gracefully."""
         self._running = False
 
-    def _save_snapshot(self, frame) -> str | None:
+    def _save_snapshot(self, frame) -> Optional[str]:
         """Save a snapshot to the designated folder and return the saved path."""
+        if frame is None:
+            return None
         folder = Path(self.save_folder)
         try:
             folder.mkdir(parents=True, exist_ok=True)
             now = datetime.now()
-            # Format: CH{channel}_{datetime}_{milliseconds}.jpg (e.g. CH1_20260814_091530_123.jpg)
-            # Includes millisecond precision to allow storing multiple snapshots in the same second for the same camera.
             timestamp = now.strftime('%Y%m%d_%H%M%S') + f"_{now.microsecond // 1000:03d}"
             filename = folder / f"CH{self.channel}_{timestamp}.jpg"
             if filename.exists():

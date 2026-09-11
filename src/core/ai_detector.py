@@ -7,6 +7,7 @@ zero heavy external ML dependencies.
 
 import threading
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -69,6 +70,7 @@ class AIDetector:
         self._is_loaded = False
         self._load_lock = threading.Lock()
         self._input_size = (640, 640)
+        self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="AIDetectorWorker")
 
     @classmethod
     def get_instance(cls) -> 'AIDetector':
@@ -81,6 +83,33 @@ class AIDetector:
     def is_ready(self) -> bool:
         """Check if model is loaded and ready for inference."""
         return self._is_loaded and self._net is not None
+
+    def detect_async(
+        self,
+        frame: np.ndarray,
+        conf_threshold: float = 0.45,
+        allowed_categories: set[str] | None = None,
+        callback=None,
+    ):
+        """Asynchronously run object detection on background thread.
+        
+        Invokes callback(detections) upon completion without blocking video streams.
+        """
+        def _task():
+            try:
+                detections = self.detect(
+                    frame=frame,
+                    conf_threshold=conf_threshold,
+                    allowed_categories=allowed_categories,
+                )
+                if callback:
+                    callback(detections)
+            except Exception as e:
+                print(f"CamView: AIDetector async task error: {e}")
+                if callback:
+                    callback([])
+
+        return self._executor.submit(_task)
 
     def ensure_model_ready(self) -> bool:
         """Download and load the ONNX model if not already in memory."""

@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox, 
     QSlider, QSpinBox, QDoubleSpinBox, QPushButton, QFrame, QGroupBox,
-    QFileDialog, QTabWidget, QWidget
+    QFileDialog, QTabWidget, QWidget, QComboBox
 )
 from PySide6.QtCore import Qt, Signal
 from src.core.connection import DVRConfig
@@ -106,12 +106,43 @@ class TrackingSettingsDialog(QDialog):
         tab_motion_layout.setContentsMargins(4, 8, 4, 4)
 
         # Algorithm Group
-        group_algo = QGroupBox("Motion Detection Algorithm")
+        group_algo = QGroupBox("Motion Detection Engine")
         algo_layout = QVBoxLayout(group_algo)
         algo_layout.setSpacing(10)
 
-        self.cb_filter = QCheckBox("Enable Morphological Noise Filter")
-        self.cb_filter.setToolTip("Removes thin streaks like flying bugs or rain")
+        # Algorithm selection
+        algo_select_layout = QHBoxLayout()
+        algo_select_label = QLabel("Algorithm:")
+        algo_select_label.setStyleSheet(f"color: {Colors.TEXT_SECONDARY}; font-weight: 600; font-size: 12px;")
+        self.combo_algo = QComboBox()
+        self.combo_algo.addItem("KNN (Recommended - Shadow Suppression)", "knn")
+        self.combo_algo.addItem("MOG2 (Gaussian Mixture Model)", "mog2")
+        current_algo = getattr(self.config, 'motion_algorithm', 'knn')
+        idx = self.combo_algo.findData(current_algo)
+        if idx >= 0:
+            self.combo_algo.setCurrentIndex(idx)
+        algo_select_layout.addWidget(algo_select_label)
+        algo_select_layout.addWidget(self.combo_algo, stretch=1)
+        algo_layout.addLayout(algo_select_layout)
+
+        # Downscale Optimization
+        downscale_layout = QHBoxLayout()
+        downscale_label = QLabel("Performance Downscaling:")
+        downscale_label.setStyleSheet(f"color: {Colors.TEXT_SECONDARY}; font-weight: 600; font-size: 12px;")
+        self.combo_downscale = QComboBox()
+        self.combo_downscale.addItem("Ultra Fast (480p - 70% CPU savings)", 480)
+        self.combo_downscale.addItem("Balanced (640p)", 640)
+        self.combo_downscale.addItem("Native Resolution (High CPU)", 0)
+        current_downscale = getattr(self.config, 'motion_downscale_width', 480)
+        idx_ds = self.combo_downscale.findData(current_downscale)
+        if idx_ds >= 0:
+            self.combo_downscale.setCurrentIndex(idx_ds)
+        downscale_layout.addWidget(downscale_label)
+        downscale_layout.addWidget(self.combo_downscale, stretch=1)
+        algo_layout.addLayout(downscale_layout)
+
+        self.cb_filter = QCheckBox("Enable Morphological Noise Filter (Rain / Bug Filter)")
+        self.cb_filter.setToolTip("Removes thin streaks like flying bugs or rain droplets")
         self.cb_filter.setChecked(self.config.tracking_filter_enabled)
         algo_layout.addWidget(self.cb_filter)
 
@@ -420,6 +451,8 @@ class TrackingSettingsDialog(QDialog):
 
     def _on_save(self):
         # Motion settings
+        self.config.motion_algorithm = self.combo_algo.currentData() or 'knn'
+        self.config.motion_downscale_width = int(self.combo_downscale.currentData() or 480)
         self.config.tracking_filter_enabled = self.cb_filter.isChecked()
         self.config.tracking_min_area = self.spin_area.value()
         self.config.tracking_persistence = self.spin_pers.value()

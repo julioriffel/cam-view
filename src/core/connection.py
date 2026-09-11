@@ -26,6 +26,8 @@ class DVRConfig:
     tracking_filter_enabled: bool = True
     tracking_min_area: int = 1500
     tracking_persistence: int = 5
+    motion_algorithm: str = 'knn'  # 'knn' or 'mog2'
+    motion_downscale_width: int = 480
     snapshot_on_motion: bool = True
     snapshot_interval: float = 2.0
     ai_enabled: bool = True

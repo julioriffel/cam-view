@@ -803,6 +803,8 @@ class ViewerWindow(QMainWindow):
                     filter_enabled=self.config.tracking_filter_enabled,
                     min_area=self.config.tracking_min_area,
                     persistence=self.config.tracking_persistence,
+                    motion_algorithm=getattr(self.config, 'motion_algorithm', 'knn'),
+                    motion_downscale_width=getattr(self.config, 'motion_downscale_width', 480),
                     snapshot_on_motion=self.config.snapshot_on_motion,
                     snapshot_interval=self.config.snapshot_interval,
                     ai_enabled=self.config.ai_enabled,
